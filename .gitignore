@@ -1,0 +1,16 @@
+# Julia
+*.jl.cov
+*.jl.*.cov
+*.jl.mem
+/deps/
+/compiled/
+/logs/
+/manifest/
+
+# Environments
+Manifest.toml
+
+# Editors/OS
+.DS_Store
+.vscode/
+.idea/
