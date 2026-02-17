@@ -24,3 +24,7 @@ Pkg.instantiate()
 using Pkg
 Pkg.test()
 ```
+
+## Developer notes
+
+- Component interface contract: `src/components/README.md`

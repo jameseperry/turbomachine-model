@@ -1,10 +1,10 @@
 module TurboMachineModel
 
-include("structure/Structure.jl")
 include("components/Components.jl")
+include("structure/Structure.jl")
 
-using .Structure
 using .Components
+using .Structure
 
 export Structure, Components
 
