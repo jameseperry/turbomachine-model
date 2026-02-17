@@ -6,6 +6,14 @@ Table convention:
 - `w_corr_grid` is corrected mass-flow axis.
 - `pr_table[i, j]` and `eta_table[i, j]` correspond to
   `n_corr_grid[i]`, `w_corr_grid[j]`.
+
+Parameters:
+- `Tt_ref`: reference total temperature used for corrected-value normalization.
+- `Pt_ref`: reference total pressure used for corrected-value normalization.
+- `n_corr_grid`: corrected speed grid (ascending).
+- `w_corr_grid`: corrected mass-flow grid (ascending).
+- `pr_table`: pressure-ratio lookup table over (`n_corr_grid`, `w_corr_grid`).
+- `eta_table`: isentropic-efficiency lookup table over (`n_corr_grid`, `w_corr_grid`).
 """
 struct PerformanceMap
     Tt_ref::Float64
@@ -45,9 +53,15 @@ function PerformanceMap(
     )
 end
 
+"""
+Corrected shaft speed from physical speed and local total temperature.
+"""
 corrected_speed(N::Real, Tt_in::Real, Tt_ref::Real) =
     N / sqrt(Tt_in / Tt_ref)
 
+"""
+Corrected mass flow from physical flow and local total conditions.
+"""
 corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, Tt_ref::Real, Pt_ref::Real) =
     mdot * sqrt(Tt_in / Tt_ref) / (Pt_in / Pt_ref)
 
@@ -92,6 +106,9 @@ function _bilinear(
     return f0 * (1 - ty) + f1 * ty
 end
 
+"""
+Interpolate pressure ratio and isentropic efficiency at corrected coordinates.
+"""
 function map_pr_eta(map::PerformanceMap, N_corr::Real, W_corr::Real)
     n = Float64(N_corr)
     w = Float64(W_corr)
@@ -100,7 +117,18 @@ function map_pr_eta(map::PerformanceMap, N_corr::Real, W_corr::Real)
     return (PR=PR, eta=eta)
 end
 
-function map_pr_eta_from_inlet(
+"""
+Compute corrected coordinates and return `(N_corr, W_corr, PR, eta)` from
+physical shaft speed, mass flow, and local stagnation conditions.
+
+Parameters:
+- `map`: performance map wrapper.
+- `N`: physical shaft speed.
+- `mdot`: physical mass flow rate.
+- `Tt_in`: local total (stagnation) temperature at the component inlet station.
+- `Pt_in`: local total (stagnation) pressure at the component inlet station.
+"""
+function map_pr_eta_from_stagnation(
     map::PerformanceMap,
     N::Real,
     mdot::Real,
@@ -111,4 +139,53 @@ function map_pr_eta_from_inlet(
     W_corr = corrected_flow(mdot, Tt_in, Pt_in, map)
     vals = map_pr_eta(map, N_corr, W_corr)
     return (N_corr=N_corr, W_corr=W_corr, PR=vals.PR, eta=vals.eta)
+end
+
+"""
+Demo compressor map for testing and examples.
+
+This is synthetic data intended for development/demo use only.
+"""
+function demo_compressor_map()
+    PerformanceMap(
+        288.15,
+        101_325.0,
+        [0.6, 0.8, 1.0],
+        [12.0, 16.0, 20.0],
+        [
+            1.35 1.55 1.70;
+            1.55 1.80 2.00;
+            1.70 2.00 2.25;
+        ],
+        [
+            0.74 0.78 0.75;
+            0.78 0.83 0.80;
+            0.76 0.82 0.79;
+        ],
+    )
+end
+
+"""
+Demo turbine map for testing and examples.
+
+This is synthetic data intended for development/demo use only.
+Pressure-ratio convention here is `Pt_out / Pt_in` (less than 1 for expansion).
+"""
+function demo_turbine_map()
+    PerformanceMap(
+        288.15,
+        101_325.0,
+        [0.6, 0.8, 1.0],
+        [10.0, 14.0, 18.0],
+        [
+            0.78 0.72 0.68;
+            0.74 0.68 0.64;
+            0.70 0.65 0.60;
+        ],
+        [
+            0.82 0.84 0.83;
+            0.85 0.88 0.87;
+            0.84 0.87 0.86;
+        ],
+    )
 end

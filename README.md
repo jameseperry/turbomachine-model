@@ -1,30 +1,5 @@
 # TurboMachineModel
 
-Julia project scaffold for turbomachinery simulation.
+`TurboMachineModel` is a Julia codebase for simulating turbomachines, such as gas turbines and rocket engines.
 
-Scope for future implementation:
-- Gas-side modeling (thermodynamics/flow)
-- Mechanical-side modeling (rotordynamics/components)
-- Coupling/integration workflows
-
-## Getting started
-
-1. Install Julia 1.10+.
-2. From this directory, start Julia and activate the environment:
-
-```julia
-using Pkg
-Pkg.activate(".")
-Pkg.instantiate()
-```
-
-3. Run tests:
-
-```julia
-using Pkg
-Pkg.test()
-```
-
-## Developer notes
-
-- Component interface contract: `src/components/README.md`
+The goal is to build networked fluid/mechanical component models that can be assembled into full-engine systems and then solved as coupled dynamic equations.

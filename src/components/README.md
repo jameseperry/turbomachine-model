@@ -10,7 +10,7 @@ All components should subtype:
 
 Defined in:
 
-- `src/components/abstract_component.jl`
+- `src/framework/component_api.jl`
 
 ## Required Structural Interface
 
@@ -18,7 +18,7 @@ These methods are required for structural model assembly.
 
 1. `port_specs(c)::Dict{Symbol,Any}`
 - Returns port specs by port name.
-- Port specs should follow the shape used by `PortPresets` and `Structure.PortSpec`.
+- Port specs should follow the shape used by framework presets and `Framework.PortSpec`.
 
 2. `required_ports(c)::Vector{Symbol}`
 - Returns the list of required ports for this component.
@@ -56,5 +56,6 @@ These are not required for structural-only assembly, but are expected for simula
 ## Conventions
 
 1. Keep port definitions centralized where possible using `PortPresets`.
+  Source: `src/framework/port_presets.jl`.
 2. Use outward-positive sign convention for through variables.
-3. Keep connection semantics in structure/validation code; keep component files focused on component behavior and invariants.
+3. Keep connection semantics in framework/validation code; keep component files focused on component behavior and invariants.

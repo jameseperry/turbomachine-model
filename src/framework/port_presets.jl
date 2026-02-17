@@ -1,5 +1,3 @@
-module PortPresets
-
 const FLUID_THROUGH_VARS = [
     (var=:Pt, unit=:Pa, coupling=:equality),
     (var=:Tt, unit=:K, coupling=:equality),
@@ -15,5 +13,3 @@ const SHAFT_VARS = [
 
 const FLUID_PORT = (domain=:fluid, vars=FLUID_THROUGH_VARS)
 const SHAFT_PORT = (domain=:shaft, vars=SHAFT_VARS)
-
-end # module PortPresets

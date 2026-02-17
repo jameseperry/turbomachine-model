@@ -1,6 +1,6 @@
 """
 Ideal-gas utility functions for converting between total (stagnation)
-and static flow properties.
+and static pressure-temperature properties.
 
 These helpers are intentionally simple and use scalar values.
 """
@@ -28,15 +28,3 @@ Total pressure from static pressure, Mach number, and gamma.
 """
 total_pressure_from_static(P::Real, mach::Real, gamma::Real) =
     P * (1 + 0.5 * (gamma - 1) * mach^2)^(gamma / (gamma - 1))
-
-"""
-Static enthalpy from total enthalpy and velocity.
-"""
-static_enthalpy_from_total(ht::Real, velocity::Real) =
-    ht - 0.5 * velocity^2
-
-"""
-Total enthalpy from static enthalpy and velocity.
-"""
-total_enthalpy_from_static(h::Real, velocity::Real) =
-    h + 0.5 * velocity^2

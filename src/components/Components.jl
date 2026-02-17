@@ -1,49 +1,18 @@
 module Components
 
-include("abstract_component.jl")
-include("port_presets.jl")
+import ..Framework: AbstractComponent, port_specs, required_ports, validate
+using ..Framework: FLUID_PORT, SHAFT_PORT
+using ..Physics.Fluids: PerformanceMap
 
-using .AbstractComponentDef
-using .PortPresets
+include("combustor.jl")
+include("turbo_machine_section.jl")
+include("inertial_shaft.jl")
 
-const AbstractComponent = AbstractComponentDef.AbstractComponent
-
-"""
-Return the structural port specification for a component.
-Components should overload this.
-"""
-function port_specs(::AbstractComponent)
-    error("port_specs not implemented for this component type")
-end
-
-"""
-Return required port names for a component.
-Components should overload this.
-"""
-function required_ports(::AbstractComponent)
-    Symbol[]
-end
-
-"""
-Validate a component's parameterization and invariants.
-Components should overload this.
-"""
-function validate(c::AbstractComponent)
-    c
-end
-
-include("fluid/Fluid.jl")
-include("mechanical/Mechanical.jl")
-
-using .Fluid
-using .Mechanical
-
-export AbstractComponent, PortPresets, Fluid, Mechanical, port_specs, required_ports, validate
+export AbstractComponent, Combustor, TurboMachineSection, InertialShaft
 
 """
 Namespace for concrete component implementations
-(compressor, turbine, combustor, shaft, etc.).
-Structural component data types are defined; behavior is deferred.
+(compressor/turbine sections, combustors, shafts, etc.).
 """
 
 end # module Components
