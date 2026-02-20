@@ -30,5 +30,5 @@
     @test tm.mode == :compressor
     @test :inlet in keys(F.port_specs(tm))
     inlet_vars = first(F.port_specs(tm)[:inlet].vars)
-    @test inlet_vars.var == :p
+    @test inlet_vars.var == :pt
 end

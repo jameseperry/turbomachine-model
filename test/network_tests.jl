@@ -26,14 +26,14 @@
         :b_in,
         F.EndpointRef(:cmp, :inlet),
         :prescribed_state,
-        (; p=101_325.0, h=300_000.0, mdot=-15.0, composition=:air),
+        (; pt=101_325.0, ht=300_000.0, mdot=-15.0, composition=:air),
     )
     F.add_boundary!(
         net,
         :b_out,
         F.EndpointRef(:cmb, :outlet),
         :prescribed_state,
-        (; p=99_000.0, h=450_000.0, mdot=15.0, composition=:air),
+        (; pt=99_000.0, ht=450_000.0, mdot=15.0, composition=:air),
     )
     F.add_boundary!(net, :b_shaft, F.EndpointRef(:shaft, :shaft2), :prescribed_speed, 10_000.0)
     F.add_boundary!(net, :b_shaft3, F.EndpointRef(:shaft, :shaft3), :prescribed_torque, 0.0)

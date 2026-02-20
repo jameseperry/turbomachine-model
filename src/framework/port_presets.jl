@@ -1,6 +1,6 @@
 const FLUID_THROUGH_VARS = [
-    (var=:p, unit=:Pa, coupling=:equality),
-    (var=:h, unit=:J_per_kg, coupling=:equality),
+    (var=:pt, unit=:Pa, coupling=:equality),
+    (var=:ht, unit=:J_per_kg, coupling=:equality),
     (var=:mdot, unit=:kg_per_s, coupling=:conservation),
     (var=:composition, unit=:symbol, coupling=:equality),
 ]
