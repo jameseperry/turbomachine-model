@@ -1,32 +1,41 @@
 """
-Bundle of fluid-property law functions for a specific composition.
+Bundle of equation-of-state functions for a specific composition.
 
 Each member is a callable function:
-- `enthalpy_from_temperature(T)`
-- `temperature_from_enthalpy(h)`
-- `density_from_pressure_temperature(p, T)`
-- `density_from_pressure_enthalpy(p, h)`
-- `speed_of_sound_from_temperature(T)`
-- `speed_of_sound_from_enthalpy(h)`
+- `temperature(p, h)`
+- `entropy(p, h)`
+- `density(p, h)`
+- `speed_of_sound(p, h)`
+- `heat_capacity_cp(p, h)`
+- `dynamic_viscosity(p, h)`
+- `thermal_conductivity(p, h)`
+- `phase(p, h)`
+- `enthalpy_from_pressure_entropy(p, s)`
 """
 struct EquationsOfState{
-    FEnthalpyFromTemperature,
-    FTemperatureFromEnthalpy,
-    FDensityFromPressureTemperature,
-    FDensityFromPressureEnthalpy,
-    FSpeedOfSoundFromTemperature,
-    FSpeedOfSoundFromEnthalpy,
+    FTemperature,
+    FEntropy,
+    FDensity,
+    FSpeedOfSound,
+    FHeatCapacityCp,
+    FDynamicViscosity,
+    FThermalConductivity,
+    FPhase,
+    FEnthalpyFromPressureEntropy,
 }
-    enthalpy_from_temperature::FEnthalpyFromTemperature
-    temperature_from_enthalpy::FTemperatureFromEnthalpy
-    density_from_pressure_temperature::FDensityFromPressureTemperature
-    density_from_pressure_enthalpy::FDensityFromPressureEnthalpy
-    speed_of_sound_from_temperature::FSpeedOfSoundFromTemperature
-    speed_of_sound_from_enthalpy::FSpeedOfSoundFromEnthalpy
+    temperature::FTemperature
+    entropy::FEntropy
+    density::FDensity
+    speed_of_sound::FSpeedOfSound
+    heat_capacity_cp::FHeatCapacityCp
+    dynamic_viscosity::FDynamicViscosity
+    thermal_conductivity::FThermalConductivity
+    phase::FPhase
+    enthalpy_from_pressure_entropy::FEnthalpyFromPressureEntropy
 end
 
 """
-Registry mapping composition ids to fluid-law bundles.
+Registry mapping composition ids to equation-of-state bundles.
 """
 const EquationsOfStateRegistry = Dict{Symbol,EquationsOfState}
 
@@ -35,12 +44,15 @@ Create an `EquationsOfState` bundle from a composition object.
 """
 function EquationsOfState(composition::AbstractComposition)
     return EquationsOfState(
-        temperature -> enthalpy_from_temperature(composition, temperature),
-        enthalpy -> temperature_from_enthalpy(composition, enthalpy),
-        (pressure, temperature) -> density_from_pressure_temperature(composition, pressure, temperature),
-        (pressure, enthalpy) -> density_from_pressure_enthalpy(composition, pressure, enthalpy),
-        temperature -> speed_of_sound_from_temperature(composition, temperature),
-        enthalpy -> speed_of_sound_from_enthalpy(composition, enthalpy),
+        (pressure, enthalpy) -> temperature(composition, pressure, enthalpy),
+        (pressure, enthalpy) -> entropy(composition, pressure, enthalpy),
+        (pressure, enthalpy) -> density(composition, pressure, enthalpy),
+        (pressure, enthalpy) -> speed_of_sound(composition, pressure, enthalpy),
+        (pressure, enthalpy) -> heat_capacity_cp(composition, pressure, enthalpy),
+        (pressure, enthalpy) -> dynamic_viscosity(composition, pressure, enthalpy),
+        (pressure, enthalpy) -> thermal_conductivity(composition, pressure, enthalpy),
+        (pressure, enthalpy) -> phase(composition, pressure, enthalpy),
+        (pressure, entropy) -> enthalpy_from_pressure_entropy(composition, pressure, entropy),
     )
 end
 
@@ -75,58 +87,92 @@ function _get_equation_of_state(registry::EquationsOfStateRegistry, composition:
     return registry[composition]
 end
 
-function enthalpy_from_temperature(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
-    temperature::Real,
-)
-    laws = _get_equation_of_state(registry, composition)
-    return laws.enthalpy_from_temperature(temperature)
-end
-
-function temperature_from_enthalpy(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
-    enthalpy::Real,
-)
-    laws = _get_equation_of_state(registry, composition)
-    return laws.temperature_from_enthalpy(enthalpy)
-end
-
-function density_from_pressure_temperature(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
-    pressure::Real,
-    temperature::Real,
-)
-    laws = _get_equation_of_state(registry, composition)
-    return laws.density_from_pressure_temperature(pressure, temperature)
-end
-
-function density_from_pressure_enthalpy(
+function temperature(
     registry::EquationsOfStateRegistry,
     composition::Symbol,
     pressure::Real,
     enthalpy::Real,
 )
-    laws = _get_equation_of_state(registry, composition)
-    return laws.density_from_pressure_enthalpy(pressure, enthalpy)
+    equation_of_state = _get_equation_of_state(registry, composition)
+    return equation_of_state.temperature(pressure, enthalpy)
 end
 
-function speed_of_sound_from_temperature(
+function entropy(
     registry::EquationsOfStateRegistry,
     composition::Symbol,
-    temperature::Real,
-)
-    laws = _get_equation_of_state(registry, composition)
-    return laws.speed_of_sound_from_temperature(temperature)
-end
-
-function speed_of_sound_from_enthalpy(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    pressure::Real,
     enthalpy::Real,
 )
-    laws = _get_equation_of_state(registry, composition)
-    return laws.speed_of_sound_from_enthalpy(enthalpy)
+    equation_of_state = _get_equation_of_state(registry, composition)
+    return equation_of_state.entropy(pressure, enthalpy)
+end
+
+function density(
+    registry::EquationsOfStateRegistry,
+    composition::Symbol,
+    pressure::Real,
+    enthalpy::Real,
+)
+    equation_of_state = _get_equation_of_state(registry, composition)
+    return equation_of_state.density(pressure, enthalpy)
+end
+
+function speed_of_sound(
+    registry::EquationsOfStateRegistry,
+    composition::Symbol,
+    pressure::Real,
+    enthalpy::Real,
+)
+    equation_of_state = _get_equation_of_state(registry, composition)
+    return equation_of_state.speed_of_sound(pressure, enthalpy)
+end
+
+function heat_capacity_cp(
+    registry::EquationsOfStateRegistry,
+    composition::Symbol,
+    pressure::Real,
+    enthalpy::Real,
+)
+    equation_of_state = _get_equation_of_state(registry, composition)
+    return equation_of_state.heat_capacity_cp(pressure, enthalpy)
+end
+
+function dynamic_viscosity(
+    registry::EquationsOfStateRegistry,
+    composition::Symbol,
+    pressure::Real,
+    enthalpy::Real,
+)
+    equation_of_state = _get_equation_of_state(registry, composition)
+    return equation_of_state.dynamic_viscosity(pressure, enthalpy)
+end
+
+function thermal_conductivity(
+    registry::EquationsOfStateRegistry,
+    composition::Symbol,
+    pressure::Real,
+    enthalpy::Real,
+)
+    equation_of_state = _get_equation_of_state(registry, composition)
+    return equation_of_state.thermal_conductivity(pressure, enthalpy)
+end
+
+function phase(
+    registry::EquationsOfStateRegistry,
+    composition::Symbol,
+    pressure::Real,
+    enthalpy::Real,
+)
+    equation_of_state = _get_equation_of_state(registry, composition)
+    return equation_of_state.phase(pressure, enthalpy)
+end
+
+function enthalpy_from_pressure_entropy(
+    registry::EquationsOfStateRegistry,
+    composition::Symbol,
+    pressure::Real,
+    entropy::Real,
+)
+    equation_of_state = _get_equation_of_state(registry, composition)
+    return equation_of_state.enthalpy_from_pressure_entropy(pressure, entropy)
 end

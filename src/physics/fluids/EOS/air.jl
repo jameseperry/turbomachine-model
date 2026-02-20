@@ -43,3 +43,67 @@ function speed_of_sound_from_enthalpy(
 )
     error("speed_of_sound_from_enthalpy for AirComposition is not implemented")
 end
+
+function temperature(
+    ::AirComposition,
+    pressure::Real,
+    enthalpy::Real,
+)
+    error("temperature for AirComposition is not implemented")
+end
+
+function entropy(
+    ::AirComposition,
+    pressure::Real,
+    enthalpy::Real,
+)
+    error("entropy for AirComposition is not implemented")
+end
+
+function speed_of_sound(
+    ::AirComposition,
+    pressure::Real,
+    enthalpy::Real,
+)
+    error("speed_of_sound for AirComposition is not implemented")
+end
+
+function heat_capacity_cp(
+    ::AirComposition,
+    pressure::Real,
+    enthalpy::Real,
+)
+    error("heat_capacity_cp for AirComposition is not implemented")
+end
+
+function dynamic_viscosity(
+    ::AirComposition,
+    pressure::Real,
+    enthalpy::Real,
+)
+    error("dynamic_viscosity for AirComposition is not implemented")
+end
+
+function thermal_conductivity(
+    ::AirComposition,
+    pressure::Real,
+    enthalpy::Real,
+)
+    error("thermal_conductivity for AirComposition is not implemented")
+end
+
+function phase(
+    ::AirComposition,
+    pressure::Real,
+    enthalpy::Real,
+)
+    error("phase for AirComposition is not implemented")
+end
+
+function enthalpy_from_pressure_entropy(
+    ::AirComposition,
+    pressure::Real,
+    entropy::Real,
+)
+    error("enthalpy_from_pressure_entropy for AirComposition is not implemented")
+end
