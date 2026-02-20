@@ -59,3 +59,4 @@ These are not required for structural-only assembly, but are expected for simula
   Source: `src/framework/port_presets.jl`.
 2. Use outward-positive sign convention for through variables.
 3. Keep connection semantics in framework/validation code; keep component files focused on component behavior and invariants.
+4. Network topology is managed in `src/framework` (`Network`, `EndpointRef`, `connect!`, `validate_network`).

@@ -1,4 +1,9 @@
-const Endpoint = Tuple{Symbol,Symbol}
+struct EndpointRef
+    component::Symbol
+    port::Symbol
+end
+
+const Endpoint = EndpointRef
 
 const VariableSpec = NamedTuple{
     (:var, :unit, :coupling),
@@ -12,16 +17,29 @@ end
 
 const ConnectionSpec = NamedTuple{
     (:from, :to, :vars),
-    Tuple{Endpoint,Endpoint,Union{Symbol,Vector{Symbol}}},
+    Tuple{EndpointRef,EndpointRef,Union{Symbol,Vector{Symbol}}},
 }
 
 const BoundarySpec = NamedTuple{
     (:id, :target, :bc_type, :value_spec, :priority),
-    Tuple{Symbol,Endpoint,Symbol,Any,Int},
+    Tuple{Symbol,EndpointRef,Symbol,Any,Int},
 }
 
-struct Model
+struct Network
     components::Dict{Symbol,AbstractComponent}
     connections::Vector{ConnectionSpec}
     boundaries::Vector{BoundarySpec}
+end
+
+const Model = Network
+
+struct ValidationIssue
+    level::Symbol
+    code::Symbol
+    message::String
+end
+
+struct ValidationReport
+    valid::Bool
+    issues::Vector{ValidationIssue}
 end

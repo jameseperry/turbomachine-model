@@ -47,8 +47,10 @@ end
 ### 2.2 Ports and Endpoints
 
 ```julia
-# Endpoint tuple: (component_id, port_id)
-const Endpoint = Tuple{Symbol,Symbol}
+struct EndpointRef
+    component::Symbol
+    port::Symbol
+end
 ```
 
 Port definitions are provided by component methods, for example:
@@ -67,25 +69,25 @@ Each port spec declares at least:
 ### 2.3 Network Graph
 
 ```julia
-struct Model
+struct Network
     components::Dict{Symbol,AbstractComponent}
     # each: (from, to, vars)
     # vars can be :all or an explicit vector of variable symbols
     connections::Vector{NamedTuple{
         (:from, :to, :vars),
-        Tuple{Endpoint,Endpoint,Union{Symbol,Vector{Symbol}}}
+        Tuple{EndpointRef,EndpointRef,Union{Symbol,Vector{Symbol}}}
     }}
     # each: (id, target, bc_type, value_spec, priority)
     boundaries::Vector{NamedTuple{
         (:id, :target, :bc_type, :value_spec, :priority),
-        Tuple{Symbol,Endpoint,Symbol,Any,Int}
+        Tuple{Symbol,EndpointRef,Symbol,Any,Int}
     }}
 end
 ```
 
 ### 2.4 Assembly-Time Controls
 
-Assembly and solver controls are passed into functions instead of being stored in `Model`.
+Assembly and solver controls are passed into functions instead of being stored in `Network`.
 
 Examples:
 
@@ -143,7 +145,7 @@ Required:
 Port typing is explicit so connection validation can be deterministic.
 `Unitful.jl` is used for unit metadata and compatibility checks.
 Connections are ideal interfaces in this model, so transported properties are equality-coupled.
-Connections are strictly 2-port only.
+Connections are strictly 2-port only (`connect!`/`validate_network` enforce max one connection per endpoint).
 
 ```julia
 using Unitful
@@ -270,8 +272,8 @@ Commands are modeled as boundary conditions, not connection-coupled port variabl
 
 Examples:
 
-- `(id=:u1, target=(:cmp,:vsv_angle_cmd), bc_type=:prescribed_input, value_spec=0.12u"rad", priority=10)`
-- `(id=:u2, target=(:nozzle,:area_cmd), bc_type=:prescribed_input, value_spec=0.015u"m^2", priority=10)`
+- `(id=:u1, target=EndpointRef(:cmp,:vsv_angle_cmd), bc_type=:prescribed_input, value_spec=0.12u"rad", priority=10)`
+- `(id=:u2, target=EndpointRef(:nozzle,:area_cmd), bc_type=:prescribed_input, value_spec=0.015u"m^2", priority=10)`
 
 ## 7. Example Usage Sketch
 
@@ -299,7 +301,7 @@ spool = ShaftInertia(
     init=(omega=800.0,),
 )
 
-model = Model(
+network = Network(
     components = Dict(
         :cmp   => cmp,
         :cmb   => cmb,
@@ -308,16 +310,16 @@ model = Model(
     ),
 
     connections = [
-        (from=(:cmp,:outlet), to=(:cmb,:inlet),   vars=:all),
-        (from=(:cmb,:outlet), to=(:trb,:inlet),   vars=:all),
-        (from=(:cmp,:shaft),  to=(:spool,:left),  vars=[:omega, :tau]),
-        (from=(:trb,:shaft),  to=(:spool,:right), vars=[:omega, :tau]),
+        (from=EndpointRef(:cmp,:outlet), to=EndpointRef(:cmb,:inlet),   vars=:all),
+        (from=EndpointRef(:cmb,:outlet), to=EndpointRef(:trb,:inlet),   vars=:all),
+        (from=EndpointRef(:cmp,:shaft),  to=EndpointRef(:spool,:left),  vars=[:omega, :tau]),
+        (from=EndpointRef(:trb,:shaft),  to=EndpointRef(:spool,:right), vars=[:omega, :tau]),
     ],
 
     boundaries = [
-        (id=:b1, target=(:cmp,:inlet),   bc_type=:fixed_total_pressure,    value_spec=101325u"Pa", priority=10),
-        (id=:b2, target=(:cmp,:inlet),   bc_type=:fixed_total_temperature, value_spec=288.15u"K",  priority=10),
-        (id=:b3, target=(:trb,:outlet),  bc_type=:fixed_static_pressure,   value_spec=101325u"Pa", priority=10),
+        (id=:b1, target=EndpointRef(:cmp,:inlet),   bc_type=:fixed_total_pressure,    value_spec=101325u"Pa", priority=10),
+        (id=:b2, target=EndpointRef(:cmp,:inlet),   bc_type=:fixed_total_temperature, value_spec=288.15u"K",  priority=10),
+        (id=:b3, target=EndpointRef(:trb,:outlet),  bc_type=:fixed_static_pressure,   value_spec=101325u"Pa", priority=10),
         (id=:b4, target=(:spool,:right), bc_type=:applied_torque_load,     value_spec=0.0u"N*m",   priority=5),
     ),
 )
@@ -338,7 +340,7 @@ model = Model(
 - This schema removes generic `type_id` / `equation_provider_id` indirection.
 - Connection behavior is intentionally minimal: strict 2-port ideal interfaces with per-variable coupling type.
 - Through variables use outward-positive sign convention.
-- Assembly controls are intentionally not stored on `Model`.
+- Assembly controls are intentionally not stored on `Network`.
 - Initial conditions are component-owned (`init`) rather than centralized.
 - Multi-port behavior (tees/manifolds/mixing/losses) should be modeled as explicit components, not connections.
 - Extension path: add a new component type and implement required methods.
