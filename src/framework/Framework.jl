@@ -8,7 +8,8 @@ include("topology.jl")
 include("validate_network.jl")
 
 export AbstractComponent, port_specs, required_ports, validate
-export FLUID_THROUGH_VARS, SHAFT_VARS, FLUID_PORT, SHAFT_PORT
+export FLUID_THROUGH_VARS, SHAFT_VARS, THERMAL_VARS
+export FLUID_PORT, SHAFT_PORT, THERMAL_PORT
 export EndpointRef, Endpoint, VariableSpec, PortSpec
 export ConnectionSpec, BoundarySpec, Network, Model
 export ValidationIssue, ValidationReport
