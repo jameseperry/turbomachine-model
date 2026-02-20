@@ -1,17 +1,17 @@
 module Fluids
 
-include("properties/composition.jl")
-include("properties/ideal_gas.jl")
-include("properties/air.jl")
-include("properties/steam.jl")
-include("properties/fluid_laws.jl")
+include("EOS/composition.jl")
+include("EOS/ideal_gas.jl")
+include("EOS/air.jl")
+include("EOS/steam.jl")
+include("EOS/equations_of_state.jl")
 include("stagnation_relations.jl")
 include("flow_energy_relations.jl")
 include("turbomachine_performance_map.jl")
 
 export AbstractComposition, AirComposition, SteamComposition, IdealGasComposition
-export FluidLaws, FluidLawsRegistry
-export real_fluid_laws, ideal_fluid_laws
+export EquationsOfState, EquationsOfStateRegistry
+export real_EOS, ideal_EOS
 export enthalpy_from_temperature, temperature_from_enthalpy
 export density_from_pressure_temperature, density_from_pressure_enthalpy
 export speed_of_sound_from_temperature, speed_of_sound_from_enthalpy

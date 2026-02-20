@@ -19,8 +19,8 @@
         @test isapprox(P.speed_of_sound_from_enthalpy(comp, h), a; rtol=1e-12)
     end
 
-    @testset "Fluid Laws Registry" begin
-        laws = P.ideal_fluid_laws()
+    @testset "Equations of State Registry" begin
+        laws = P.ideal_EOS()
         @test :air in keys(laws)
         @test :steam in keys(laws)
 
