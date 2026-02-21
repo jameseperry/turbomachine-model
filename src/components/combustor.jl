@@ -5,14 +5,14 @@ Fields:
 - `dp_frac`: fractional total-pressure drop across the combustor.
 - `fuel_lhv`: fuel lower heating value (J/kg).
 - `init`: named-tuple of component-specific initial condition values.
-- `port_map`: component ports by name.
+- `port_list`: component ports.
 - `variable_list`: component variables.
 """
 struct Combustor <: AbstractComponent
     dp_frac::Float64
     fuel_lhv::Float64
     init::NamedTuple
-    port_map::Dict{Symbol,ComponentPort}
+    port_list::Vector{ComponentPort}
     variable_list::Vector{ComponentVariable}
 end
 
@@ -21,41 +21,58 @@ function Combustor(
     fuel_lhv::Real,
     init::NamedTuple=NamedTuple(),
 )
-    port_map = Dict(
-        :inlet => ComponentPort(
-            :FluidPort;
-            variable_ids=Dict(
-                :pt => :inlet_pt,
-                :ht => :inlet_ht,
-                :composition => :inlet_composition,
-                :mdot => :inlet_mdot,
-            ),
-        ),
-        :outlet => ComponentPort(
-            :FluidPort;
-            variable_ids=Dict(
-                :pt => :outlet_pt,
-                :ht => :outlet_ht,
-                :composition => :outlet_composition,
-                :mdot => :outlet_mdot,
-            ),
-        ),
-    )
-
-    variable_list = ComponentVariable[
-        ComponentVariable(:inlet_pt, :Pa),
-        ComponentVariable(:inlet_ht, :J_per_kg),
-        ComponentVariable(:inlet_composition, :species),
-        ComponentVariable(:inlet_mdot, :kg_per_s),
-        ComponentVariable(:outlet_pt, :Pa),
-        ComponentVariable(:outlet_ht, :J_per_kg),
-        ComponentVariable(:outlet_composition, :species),
-        ComponentVariable(:outlet_mdot, :kg_per_s),
+    port_list = ComponentPort[
+        ComponentPort(shape_id=:FluidPort, name=:inlet),
+        ComponentPort(shape_id=:FluidPort, name=:outlet),
     ]
 
-    return Combustor(Float64(dp_frac), Float64(fuel_lhv), init, port_map, variable_list)
+    variable_list = ComponentVariable[
+        ComponentVariable(
+            id=:inlet_pt,
+            unit=:Pa,
+            mappings=[(port=:inlet, label=:pt)],
+        ),
+        ComponentVariable(
+            id=:inlet_ht,
+            unit=:J_per_kg,
+            mappings=[(port=:inlet, label=:ht)],
+        ),
+        ComponentVariable(
+            id=:composition,
+            unit=:species,
+            mappings=[(port=:inlet, label=:composition), (port=:outlet, label=:composition)],
+        ),
+        ComponentVariable(
+            id=:mdot,
+            unit=:kg_per_s,
+            mappings=[(port=:inlet, label=:mdot), (port=:outlet, label=:mdot)],
+        ),
+        ComponentVariable(
+            id=:outlet_pt,
+            unit=:Pa,
+            mappings=[(port=:outlet, label=:pt)],
+        ),
+        ComponentVariable(
+            id=:outlet_ht,
+            unit=:J_per_kg,
+            mappings=[(port=:outlet, label=:ht)],
+        ),
+    ]
+
+    return Combustor(
+        Float64(dp_frac),
+        Float64(fuel_lhv),
+        init,
+        port_list,
+        variable_list,
+    )
 end
 
-ports(c::Combustor) = c.port_map
+ports(c::Combustor) = c.port_list
 
-variables(c::Combustor) = c.variable_list
+function variables(c::Combustor, sim_type::Symbol)
+    if sim_type === :steady || sim_type === :transient
+        return c.variable_list
+    end
+    error("unsupported sim_type: $sim_type (expected :steady or :transient)")
+end

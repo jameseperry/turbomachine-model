@@ -1,6 +1,6 @@
 module Network
 
-import ..Component: AbstractComponent, ports
+import ..Component: AbstractComponent, has_port
 
 struct EndpointRef
     component::Symbol
@@ -30,7 +30,7 @@ Network() = Network(
 function endpoint_exists(net::Network, ep::EndpointRef)
     comp = get(net.components, ep.component, nothing)
     comp === nothing && return false
-    return ep.port in keys(ports(comp))
+    return has_port(comp, ep.port)
 end
 
 connection_id_for(net::Network, ep::EndpointRef) = get(net.connection_by_endpoint, ep, nothing)

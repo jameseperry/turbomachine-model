@@ -2,31 +2,65 @@
     F = TurboMachineModel.Component
     C = TurboMachineModel.Components
     P = TurboMachineModel.Physics.Fluids
+    port_names(c) = Set(p.name for p in F.ports(c))
+    has_mapping(c, port_name, label) =
+        any(v -> any(m -> m.port == port_name && m.label == label, v.mappings), F.variables(c, :steady))
+    mapped_variable_ids(c, sim_type, port_name, label) = Set(
+        v.id for v in F.variables(c, sim_type)
+        if any(m -> m.port == port_name && m.label == label, v.mappings)
+    )
+    variable_ids(c, sim_type) = Set(v.id for v in F.variables(c, sim_type))
 
     cmb = C.Combustor(0.04, 43e6, NamedTuple())
-    @test :inlet in keys(F.ports(cmb))
-    @test :outlet in keys(F.ports(cmb))
+    @test :inlet in port_names(cmb)
+    @test :outlet in port_names(cmb)
+    @test only(mapped_variable_ids(cmb, :steady, :inlet, :mdot)) ==
+          only(mapped_variable_ids(cmb, :steady, :outlet, :mdot))
+    @test only(mapped_variable_ids(cmb, :transient, :inlet, :mdot)) ==
+          only(mapped_variable_ids(cmb, :transient, :outlet, :mdot))
+    @test only(mapped_variable_ids(cmb, :steady, :inlet, :composition)) ==
+          only(mapped_variable_ids(cmb, :steady, :outlet, :composition))
 
     pln = C.Plenum(volume=0.25)
-    @test :inlet in keys(F.ports(pln))
-    @test :outlet in keys(F.ports(pln))
-    @test haskey(F.ports(pln)[:inlet].variable_ids, :pt)
-    @test haskey(F.ports(pln)[:outlet].variable_ids, :ht)
+    @test :inlet in port_names(pln)
+    @test :outlet in port_names(pln)
+    @test has_mapping(pln, :inlet, :pt)
+    @test has_mapping(pln, :outlet, :ht)
+    @test only(mapped_variable_ids(pln, :steady, :inlet, :pt)) ==
+          only(mapped_variable_ids(pln, :steady, :outlet, :pt))
+    @test only(mapped_variable_ids(pln, :transient, :inlet, :pt)) ==
+          only(mapped_variable_ids(pln, :transient, :outlet, :pt))
+    @test only(mapped_variable_ids(pln, :steady, :inlet, :ht)) ==
+          only(mapped_variable_ids(pln, :steady, :outlet, :ht))
+    @test only(mapped_variable_ids(pln, :transient, :inlet, :ht)) ==
+          only(mapped_variable_ids(pln, :transient, :outlet, :ht))
+    @test only(mapped_variable_ids(pln, :steady, :inlet, :mdot)) ==
+          only(mapped_variable_ids(pln, :steady, :outlet, :mdot))
+    @test only(mapped_variable_ids(pln, :transient, :inlet, :mdot)) !=
+          only(mapped_variable_ids(pln, :transient, :outlet, :mdot))
+    @test only(mapped_variable_ids(pln, :steady, :inlet, :composition)) ==
+          only(mapped_variable_ids(pln, :steady, :outlet, :composition))
+    @test :retained_mass ∉ variable_ids(pln, :steady)
+    @test :retained_mass ∈ variable_ids(pln, :transient)
     @test_throws ErrorException C.Plenum(volume=0.0)
 
     shaft = C.InertialShaft(J=0.35, damping=0.01, n_ports=3)
-    shaft_ports = keys(F.ports(shaft))
+    shaft_ports = port_names(shaft)
     @test length(collect(shaft_ports)) == 3
     @test :shaft1 in shaft_ports
     @test :shaft2 in shaft_ports
     @test :shaft3 in shaft_ports
+    @test only(mapped_variable_ids(shaft, :steady, :shaft1, :omega)) ==
+          only(mapped_variable_ids(shaft, :steady, :shaft2, :omega))
+    @test only(mapped_variable_ids(shaft, :steady, :shaft1, :tau)) !=
+          only(mapped_variable_ids(shaft, :steady, :shaft2, :tau))
 
     gb = C.Gearbox(ratio=2.5, efficiency=0.98)
-    gb_ports = keys(F.ports(gb))
+    gb_ports = port_names(gb)
     @test :input in gb_ports
     @test :output in gb_ports
-    @test haskey(F.ports(gb)[:input].variable_ids, :omega)
-    @test haskey(F.ports(gb)[:output].variable_ids, :tau)
+    @test has_mapping(gb, :input, :omega)
+    @test has_mapping(gb, :output, :tau)
     @test_throws ErrorException C.Gearbox(ratio=0.0)
     @test_throws ErrorException C.Gearbox(ratio=2.0, efficiency=0.0)
 
@@ -44,6 +78,10 @@
         eta_guess=0.9,
     )
     @test tm.mode == :compressor
-    @test :inlet in keys(F.ports(tm))
-    @test haskey(F.ports(tm)[:inlet].variable_ids, :pt)
+    @test :inlet in port_names(tm)
+    @test has_mapping(tm, :inlet, :pt)
+    @test only(mapped_variable_ids(tm, :steady, :inlet, :mdot)) ==
+          only(mapped_variable_ids(tm, :steady, :outlet, :mdot))
+    @test only(mapped_variable_ids(tm, :transient, :inlet, :mdot)) !=
+          only(mapped_variable_ids(tm, :transient, :outlet, :mdot))
 end

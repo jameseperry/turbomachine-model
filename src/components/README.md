@@ -16,9 +16,11 @@ Defined in:
 
 These methods are required for structural model assembly.
 
-1. `ports(c)::Dict{Symbol,Any}`
-- Returns port specs by port name.
-- Port specs should follow the shape used by component presets and `Component.ComponentPort`.
+1. `ports(c)::Vector{ComponentPort}`
+- Returns the component's structural ports.
+2. `variables(c, sim_type)::Vector{ComponentVariable}`
+- Returns component variables and their `(port=..., label=...)` mapping bindings.
+- `sim_type` should be `:steady` or `:transient`.
 
 ## Optional Structural Interface
 

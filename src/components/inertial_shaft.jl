@@ -6,7 +6,7 @@ Fields:
 - `damping`: linear viscous damping coefficient about the shaft axis.
 - `n_ports`: number of shaft attachment ports to expose.
 - `init`: named-tuple of component-specific initial condition values (for example `omega`).
-- `port_map`: component ports by name.
+- `port_list`: component ports.
 - `variable_list`: component variables.
 """
 struct InertialShaft <: AbstractComponent
@@ -14,7 +14,7 @@ struct InertialShaft <: AbstractComponent
     damping::Float64
     n_ports::Int
     init::NamedTuple
-    port_map::Dict{Symbol,ComponentPort}
+    port_list::Vector{ComponentPort}
     variable_list::Vector{ComponentVariable}
 end
 
@@ -30,27 +30,42 @@ function InertialShaft(;
     J_f >= 0.0 || error("InertialShaft.J must be >= 0")
     damping_f >= 0.0 || error("InertialShaft.damping must be >= 0")
     n_ports_i >= 1 || error("InertialShaft.n_ports must be >= 1")
-    port_map = Dict{Symbol,ComponentPort}()
+    port_list = ComponentPort[]
+    omega_mappings = NamedTuple{(:port,:label),Tuple{Symbol,Symbol}}[]
     variable_list = ComponentVariable[]
 
     for i in 1:n_ports_i
         name = Symbol("shaft", i)
-        omega_id = Symbol(string(name), "_omega")
         tau_id = Symbol(string(name), "_tau")
-        port_map[name] = ComponentPort(
-            :ShaftPort;
-            variable_ids=Dict(
-                :omega => omega_id,
-                :tau => tau_id,
+        push!(port_list, ComponentPort(shape_id=:ShaftPort, name=name))
+        push!(omega_mappings, (port=name, label=:omega))
+        push!(
+            variable_list,
+            ComponentVariable(
+                id=tau_id,
+                unit=:N_m,
+                mappings=[(port=name, label=:tau)],
             ),
         )
-        push!(variable_list, ComponentVariable(omega_id, :rad_per_s))
-        push!(variable_list, ComponentVariable(tau_id, :N_m))
     end
 
-    return InertialShaft(J_f, damping_f, n_ports_i, init, port_map, variable_list)
+    push!(
+        variable_list,
+        ComponentVariable(
+            id=:omega,
+            unit=:rad_per_s,
+            mappings=omega_mappings,
+        ),
+    )
+
+    return InertialShaft(J_f, damping_f, n_ports_i, init, port_list, variable_list)
 end
 
-ports(c::InertialShaft) = c.port_map
+ports(c::InertialShaft) = c.port_list
 
-variables(c::InertialShaft) = c.variable_list
+function variables(c::InertialShaft, sim_type::Symbol)
+    if sim_type === :steady || sim_type === :transient
+        return c.variable_list
+    end
+    error("unsupported sim_type: $sim_type (expected :steady or :transient)")
+end

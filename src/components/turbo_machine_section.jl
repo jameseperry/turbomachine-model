@@ -6,16 +6,18 @@ Fields:
 - `performance_map`: referenced compressor/turbine performance map data.
 - `eta_guess`: nominal isentropic efficiency guess used for initialization.
 - `init`: named-tuple of component-specific initial condition values.
-- `port_map`: component ports by name.
-- `variable_list`: component variables.
+- `port_list`: component ports.
+- `steady_variable_list`: component variables for steady simulations.
+- `transient_variable_list`: component variables for transient simulations.
 """
 struct TurboMachineSection <: AbstractComponent
     mode::Symbol
     performance_map::PerformanceMap
     eta_guess::Float64
     init::NamedTuple
-    port_map::Dict{Symbol,ComponentPort}
-    variable_list::Vector{ComponentVariable}
+    port_list::Vector{ComponentPort}
+    steady_variable_list::Vector{ComponentVariable}
+    transient_variable_list::Vector{ComponentVariable}
 end
 
 function TurboMachineSection(;
@@ -30,49 +32,121 @@ function TurboMachineSection(;
     0.0 < eta_f <= 1.0 ||
         error("TurboMachineSection.eta_guess must be in (0, 1]")
 
-    port_map = Dict(
-        :inlet => ComponentPort(
-            :FluidPort;
-            variable_ids=Dict(
-                :pt => :inlet_pt,
-                :ht => :inlet_ht,
-                :composition => :inlet_composition,
-                :mdot => :inlet_mdot,
-            ),
-        ),
-        :outlet => ComponentPort(
-            :FluidPort;
-            variable_ids=Dict(
-                :pt => :outlet_pt,
-                :ht => :outlet_ht,
-                :composition => :outlet_composition,
-                :mdot => :outlet_mdot,
-            ),
-        ),
-        :shaft => ComponentPort(
-            :ShaftPort;
-            variable_ids=Dict(
-                :omega => :shaft_omega,
-                :tau => :shaft_tau,
-            ),
-        ),
-    )
-    variable_list = ComponentVariable[
-        ComponentVariable(:inlet_pt, :Pa),
-        ComponentVariable(:inlet_ht, :J_per_kg),
-        ComponentVariable(:inlet_composition, :species),
-        ComponentVariable(:inlet_mdot, :kg_per_s),
-        ComponentVariable(:outlet_pt, :Pa),
-        ComponentVariable(:outlet_ht, :J_per_kg),
-        ComponentVariable(:outlet_composition, :species),
-        ComponentVariable(:outlet_mdot, :kg_per_s),
-        ComponentVariable(:shaft_omega, :rad_per_s),
-        ComponentVariable(:shaft_tau, :N_m),
+    port_list = ComponentPort[
+        ComponentPort(shape_id=:FluidPort, name=:inlet),
+        ComponentPort(shape_id=:FluidPort, name=:outlet),
+        ComponentPort(shape_id=:ShaftPort, name=:shaft),
     ]
 
-    return TurboMachineSection(mode, performance_map, eta_f, init, port_map, variable_list)
+    steady_variable_list = ComponentVariable[
+        ComponentVariable(
+            id=:inlet_pt,
+            unit=:Pa,
+            mappings=[(port=:inlet, label=:pt)],
+        ),
+        ComponentVariable(
+            id=:inlet_ht,
+            unit=:J_per_kg,
+            mappings=[(port=:inlet, label=:ht)],
+        ),
+        ComponentVariable(
+            id=:composition,
+            unit=:species,
+            mappings=[(port=:inlet, label=:composition), (port=:outlet, label=:composition)],
+        ),
+        ComponentVariable(
+            id=:mdot,
+            unit=:kg_per_s,
+            mappings=[(port=:inlet, label=:mdot), (port=:outlet, label=:mdot)],
+        ),
+        ComponentVariable(
+            id=:outlet_pt,
+            unit=:Pa,
+            mappings=[(port=:outlet, label=:pt)],
+        ),
+        ComponentVariable(
+            id=:outlet_ht,
+            unit=:J_per_kg,
+            mappings=[(port=:outlet, label=:ht)],
+        ),
+        ComponentVariable(
+            id=:shaft_omega,
+            unit=:rad_per_s,
+            mappings=[(port=:shaft, label=:omega)],
+        ),
+        ComponentVariable(
+            id=:shaft_tau,
+            unit=:N_m,
+            mappings=[(port=:shaft, label=:tau)],
+        ),
+    ]
+
+    transient_variable_list = ComponentVariable[
+        ComponentVariable(
+            id=:inlet_pt,
+            unit=:Pa,
+            mappings=[(port=:inlet, label=:pt)],
+        ),
+        ComponentVariable(
+            id=:inlet_ht,
+            unit=:J_per_kg,
+            mappings=[(port=:inlet, label=:ht)],
+        ),
+        ComponentVariable(
+            id=:composition,
+            unit=:species,
+            mappings=[(port=:inlet, label=:composition), (port=:outlet, label=:composition)],
+        ),
+        ComponentVariable(
+            id=:inlet_mdot,
+            unit=:kg_per_s,
+            mappings=[(port=:inlet, label=:mdot)],
+        ),
+        ComponentVariable(
+            id=:outlet_pt,
+            unit=:Pa,
+            mappings=[(port=:outlet, label=:pt)],
+        ),
+        ComponentVariable(
+            id=:outlet_ht,
+            unit=:J_per_kg,
+            mappings=[(port=:outlet, label=:ht)],
+        ),
+        ComponentVariable(
+            id=:outlet_mdot,
+            unit=:kg_per_s,
+            mappings=[(port=:outlet, label=:mdot)],
+        ),
+        ComponentVariable(
+            id=:shaft_omega,
+            unit=:rad_per_s,
+            mappings=[(port=:shaft, label=:omega)],
+        ),
+        ComponentVariable(
+            id=:shaft_tau,
+            unit=:N_m,
+            mappings=[(port=:shaft, label=:tau)],
+        ),
+    ]
+
+    return TurboMachineSection(
+        mode,
+        performance_map,
+        eta_f,
+        init,
+        port_list,
+        steady_variable_list,
+        transient_variable_list,
+    )
 end
 
-ports(c::TurboMachineSection) = c.port_map
+ports(c::TurboMachineSection) = c.port_list
 
-variables(c::TurboMachineSection) = c.variable_list
+function variables(c::TurboMachineSection, sim_type::Symbol)
+    if sim_type === :steady
+        return c.steady_variable_list
+    elseif sim_type === :transient
+        return c.transient_variable_list
+    end
+    error("unsupported sim_type: $sim_type (expected :steady or :transient)")
+end
