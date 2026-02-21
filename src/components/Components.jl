@@ -6,11 +6,11 @@ using ..Physics.Fluids: PerformanceMap
 
 include("combustor.jl")
 include("plenum.jl")
-include("turbo_machine_section.jl")
+include("turbomachine.jl")
 include("inertial_shaft.jl")
 include("gearbox.jl")
 
-export Combustor, Plenum, TurboMachineSection, InertialShaft, Gearbox
+export Combustor, Plenum, Turbomachine, InertialShaft, Gearbox
 
 """
 Namespace for concrete component implementations

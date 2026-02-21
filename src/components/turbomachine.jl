@@ -10,7 +10,7 @@ Fields:
 - `steady_variable_list`: component variables for steady simulations.
 - `transient_variable_list`: component variables for transient simulations.
 """
-struct TurboMachineSection <: AbstractComponent
+struct Turbomachine <: AbstractComponent
     mode::Symbol
     performance_map::PerformanceMap
     eta_guess::Float64
@@ -20,17 +20,17 @@ struct TurboMachineSection <: AbstractComponent
     transient_variable_list::Vector{ComponentVariable}
 end
 
-function TurboMachineSection(;
+function Turbomachine(;
     mode::Symbol,
     performance_map::PerformanceMap,
     eta_guess::Real,
     init::NamedTuple=NamedTuple(),
 )
     mode in (:compressor, :turbine) ||
-        error("TurboMachineSection.mode must be :compressor or :turbine")
+        error("Turbomachine.mode must be :compressor or :turbine")
     eta_f = Float64(eta_guess)
     0.0 < eta_f <= 1.0 ||
-        error("TurboMachineSection.eta_guess must be in (0, 1]")
+        error("Turbomachine.eta_guess must be in (0, 1]")
 
     port_list = ComponentPort[
         ComponentPort(shape_id=:FluidPort, name=:inlet),
@@ -129,7 +129,7 @@ function TurboMachineSection(;
         ),
     ]
 
-    return TurboMachineSection(
+    return Turbomachine(
         mode,
         performance_map,
         eta_f,
@@ -140,9 +140,9 @@ function TurboMachineSection(;
     )
 end
 
-ports(c::TurboMachineSection) = c.port_list
+ports(c::Turbomachine) = c.port_list
 
-function variables(c::TurboMachineSection, sim_type::Symbol)
+function variables(c::Turbomachine, sim_type::Symbol)
     if sim_type === :steady
         return c.steady_variable_list
     elseif sim_type === :transient

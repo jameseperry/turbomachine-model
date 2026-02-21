@@ -13,7 +13,7 @@
         [2.0 3.0; 4.0 5.0],
         [0.8 0.82; 0.9 0.92],
     )
-    tm = C.TurboMachineSection(mode=:compressor, performance_map=pm, eta_guess=0.9)
+    tm = C.Turbomachine(mode=:compressor, performance_map=pm, eta_guess=0.9)
 
     net = F.Network()
     F.add_component!(net, :cmp, tm)

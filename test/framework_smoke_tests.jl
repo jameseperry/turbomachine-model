@@ -11,6 +11,6 @@
     @test isdefined(TurboMachineModel.Network, :connect!)
     @test isdefined(TurboMachineModel.Components, :AbstractComponent)
     @test isdefined(TurboMachineModel.Components, :Combustor)
-    @test isdefined(TurboMachineModel.Components, :TurboMachineSection)
+    @test isdefined(TurboMachineModel.Components, :Turbomachine)
     @test isdefined(TurboMachineModel.Components, :InertialShaft)
 end
