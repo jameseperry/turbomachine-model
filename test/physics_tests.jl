@@ -1,5 +1,6 @@
 @testset "Physics" begin
     P = TurboMachineModel.Physics.Fluids
+    TP = TurboMachineModel.Physics
 
     Tt = 300.0
     Pt = 200_000.0
@@ -43,4 +44,39 @@
     trb_vals = P.map_pr_eta(trb_demo, 0.8, 14.0)
     @test cmp_vals.PR > 1.0
     @test trb_vals.PR < 1.0
+
+    @testset "Turbomachine Residuals" begin
+        eos = P.ideal_EOS()[:air]
+        map = P.PerformanceMap(
+            300.0,
+            100_000.0,
+            [1.0, 2.0],
+            [10.0, 20.0],
+            [2.0 2.0; 2.0 2.0],
+            [0.8 0.8; 0.8 0.8],
+        )
+        pt_in = 100_000.0
+        ht_in = 300_000.0
+        mdot = 15.0
+        omega = 12_000.0
+        pt_out = 2.0 * pt_in
+        h2s = P.isentropic_enthalpy(eos, pt_in, ht_in, pt_out)
+        ht_out = ht_in + (h2s - ht_in) / 0.8
+        tau = mdot * (ht_out - ht_in) / omega
+
+        R_pr, R_eta, R_P = TP.turbomachine_residuals(
+            map,
+            eos,
+            pt_in,
+            ht_in,
+            pt_out,
+            ht_out,
+            mdot,
+            omega,
+            tau,
+        )
+        @test isapprox(R_pr, 0.0; atol=1e-8)
+        @test isapprox(R_eta, 0.0; atol=1e-8)
+        @test isapprox(R_P, 0.0; atol=1e-8)
+    end
 end
