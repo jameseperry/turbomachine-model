@@ -1,109 +1,109 @@
 """
-Air composition marker.
+Air EOS marker.
 
 Placeholder type for future air-property implementation.
 """
-struct AirComposition <: AbstractComposition
+struct AirEOS <: AbstractEOS
 end
 
-function temperature_from_enthalpy(::AirComposition, enthalpy::Real)
-    error("temperature_from_enthalpy for AirComposition is not implemented")
+function temperature_from_enthalpy(::AirEOS, enthalpy::Real)
+    error("temperature_from_enthalpy for AirEOS is not implemented")
 end
 
-function enthalpy_from_temperature(::AirComposition, temperature::Real)
-    error("enthalpy_from_temperature for AirComposition is not implemented")
+function enthalpy_from_temperature(::AirEOS, temperature::Real)
+    error("enthalpy_from_temperature for AirEOS is not implemented")
 end
 
 function density_from_pressure_temperature(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     temperature::Real,
 )
-    error("density_from_pressure_temperature for AirComposition is not implemented")
+    error("density_from_pressure_temperature for AirEOS is not implemented")
 end
 
 function density_from_pressure_enthalpy(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("density_from_pressure_enthalpy for AirComposition is not implemented")
+    error("density_from_pressure_enthalpy for AirEOS is not implemented")
 end
 
 function speed_of_sound_from_temperature(
-    ::AirComposition,
+    ::AirEOS,
     temperature::Real,
 )
-    error("speed_of_sound_from_temperature for AirComposition is not implemented")
+    error("speed_of_sound_from_temperature for AirEOS is not implemented")
 end
 
 function speed_of_sound_from_enthalpy(
-    ::AirComposition,
+    ::AirEOS,
     enthalpy::Real,
 )
-    error("speed_of_sound_from_enthalpy for AirComposition is not implemented")
+    error("speed_of_sound_from_enthalpy for AirEOS is not implemented")
 end
 
 function temperature(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("temperature for AirComposition is not implemented")
+    error("temperature for AirEOS is not implemented")
 end
 
 function entropy(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("entropy for AirComposition is not implemented")
+    error("entropy for AirEOS is not implemented")
 end
 
 function speed_of_sound(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("speed_of_sound for AirComposition is not implemented")
+    error("speed_of_sound for AirEOS is not implemented")
 end
 
 function heat_capacity_cp(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("heat_capacity_cp for AirComposition is not implemented")
+    error("heat_capacity_cp for AirEOS is not implemented")
 end
 
 function dynamic_viscosity(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("dynamic_viscosity for AirComposition is not implemented")
+    error("dynamic_viscosity for AirEOS is not implemented")
 end
 
 function thermal_conductivity(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("thermal_conductivity for AirComposition is not implemented")
+    error("thermal_conductivity for AirEOS is not implemented")
 end
 
 function phase(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("phase for AirComposition is not implemented")
+    error("phase for AirEOS is not implemented")
 end
 
 function enthalpy_from_pressure_entropy(
-    ::AirComposition,
+    ::AirEOS,
     pressure::Real,
     entropy::Real,
 )
-    error("enthalpy_from_pressure_entropy for AirComposition is not implemented")
+    error("enthalpy_from_pressure_entropy for AirEOS is not implemented")
 end

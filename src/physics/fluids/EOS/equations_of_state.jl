@@ -1,178 +1,174 @@
 """
-Bundle of equation-of-state functions for a specific composition.
-
-Each member is a callable function:
-- `temperature(p, h)`
-- `entropy(p, h)`
-- `density(p, h)`
-- `speed_of_sound(p, h)`
-- `heat_capacity_cp(p, h)`
-- `dynamic_viscosity(p, h)`
-- `thermal_conductivity(p, h)`
-- `phase(p, h)`
-- `enthalpy_from_pressure_entropy(p, s)`
+Core EOS interface and registry helpers.
 """
-struct EquationsOfState{
-    FTemperature,
-    FEntropy,
-    FDensity,
-    FSpeedOfSound,
-    FHeatCapacityCp,
-    FDynamicViscosity,
-    FThermalConductivity,
-    FPhase,
-    FEnthalpyFromPressureEntropy,
-}
-    temperature::FTemperature
-    entropy::FEntropy
-    density::FDensity
-    speed_of_sound::FSpeedOfSound
-    heat_capacity_cp::FHeatCapacityCp
-    dynamic_viscosity::FDynamicViscosity
-    thermal_conductivity::FThermalConductivity
-    phase::FPhase
-    enthalpy_from_pressure_entropy::FEnthalpyFromPressureEntropy
+
+"""
+Base type for all equation-of-state models.
+"""
+abstract type AbstractEOS end
+
+_not_implemented(eos::AbstractEOS, fn::Symbol) =
+    error("$fn not implemented for EOS type $(nameof(typeof(eos)))")
+
+function enthalpy_from_temperature(
+    eos::AbstractEOS,
+    temperature::Real,
+)
+    _not_implemented(eos, :enthalpy_from_temperature)
 end
 
-"""
-Registry mapping composition ids to equation-of-state bundles.
-"""
-const EquationsOfStateRegistry = Dict{Symbol,EquationsOfState}
-
-"""
-Create an `EquationsOfState` bundle from a composition object.
-"""
-function EquationsOfState(composition::AbstractComposition)
-    return EquationsOfState(
-        (pressure, enthalpy) -> temperature(composition, pressure, enthalpy),
-        (pressure, enthalpy) -> entropy(composition, pressure, enthalpy),
-        (pressure, enthalpy) -> density(composition, pressure, enthalpy),
-        (pressure, enthalpy) -> speed_of_sound(composition, pressure, enthalpy),
-        (pressure, enthalpy) -> heat_capacity_cp(composition, pressure, enthalpy),
-        (pressure, enthalpy) -> dynamic_viscosity(composition, pressure, enthalpy),
-        (pressure, enthalpy) -> thermal_conductivity(composition, pressure, enthalpy),
-        (pressure, enthalpy) -> phase(composition, pressure, enthalpy),
-        (pressure, entropy) -> enthalpy_from_pressure_entropy(composition, pressure, entropy),
-    )
+function temperature_from_enthalpy(
+    eos::AbstractEOS,
+    enthalpy::Real,
+)
+    _not_implemented(eos, :temperature_from_enthalpy)
 end
 
-"""
-Build a registry using the placeholder real-fluid composition types.
-
-`AirComposition` and `SteamComposition` methods currently raise
-`not implemented` errors until their property functions are filled in.
-"""
-function real_EOS()
-    return EquationsOfStateRegistry(
-        :air => EquationsOfState(AirComposition()),
-        :steam => EquationsOfState(SteamComposition()),
-    )
+function density_from_pressure_temperature(
+    eos::AbstractEOS,
+    pressure::Real,
+    temperature::Real,
+)
+    _not_implemented(eos, :density_from_pressure_temperature)
 end
 
-"""
-Build a registry using ideal-gas compositions for air and steam.
-"""
-function ideal_EOS()
-    air = IdealGasComposition(:air; gas_constant=287.05, gamma=1.4)
-    steam = IdealGasComposition(:steam; gas_constant=461.5, gamma=1.33)
-    return EquationsOfStateRegistry(
-        :air => EquationsOfState(air),
-        :steam => EquationsOfState(steam),
-    )
+function density_from_pressure_enthalpy(
+    eos::AbstractEOS,
+    pressure::Real,
+    enthalpy::Real,
+)
+    _not_implemented(eos, :density_from_pressure_enthalpy)
 end
 
-function _get_equation_of_state(registry::EquationsOfStateRegistry, composition::Symbol)
-    haskey(registry, composition) ||
-        error("unknown fluid composition symbol: $composition")
-    return registry[composition]
+function speed_of_sound_from_temperature(
+    eos::AbstractEOS,
+    temperature::Real,
+)
+    _not_implemented(eos, :speed_of_sound_from_temperature)
+end
+
+function speed_of_sound_from_enthalpy(
+    eos::AbstractEOS,
+    enthalpy::Real,
+)
+    _not_implemented(eos, :speed_of_sound_from_enthalpy)
 end
 
 function temperature(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    eos::AbstractEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    equation_of_state = _get_equation_of_state(registry, composition)
-    return equation_of_state.temperature(pressure, enthalpy)
+    _not_implemented(eos, :temperature)
 end
 
 function entropy(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    eos::AbstractEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    equation_of_state = _get_equation_of_state(registry, composition)
-    return equation_of_state.entropy(pressure, enthalpy)
+    _not_implemented(eos, :entropy)
 end
 
 function density(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    eos::AbstractEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    equation_of_state = _get_equation_of_state(registry, composition)
-    return equation_of_state.density(pressure, enthalpy)
+    _not_implemented(eos, :density)
 end
 
 function speed_of_sound(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    eos::AbstractEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    equation_of_state = _get_equation_of_state(registry, composition)
-    return equation_of_state.speed_of_sound(pressure, enthalpy)
+    _not_implemented(eos, :speed_of_sound)
 end
 
 function heat_capacity_cp(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    eos::AbstractEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    equation_of_state = _get_equation_of_state(registry, composition)
-    return equation_of_state.heat_capacity_cp(pressure, enthalpy)
+    _not_implemented(eos, :heat_capacity_cp)
 end
 
 function dynamic_viscosity(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    eos::AbstractEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    equation_of_state = _get_equation_of_state(registry, composition)
-    return equation_of_state.dynamic_viscosity(pressure, enthalpy)
+    _not_implemented(eos, :dynamic_viscosity)
 end
 
 function thermal_conductivity(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    eos::AbstractEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    equation_of_state = _get_equation_of_state(registry, composition)
-    return equation_of_state.thermal_conductivity(pressure, enthalpy)
+    _not_implemented(eos, :thermal_conductivity)
 end
 
 function phase(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    eos::AbstractEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    equation_of_state = _get_equation_of_state(registry, composition)
-    return equation_of_state.phase(pressure, enthalpy)
+    _not_implemented(eos, :phase)
 end
 
 function enthalpy_from_pressure_entropy(
-    registry::EquationsOfStateRegistry,
-    composition::Symbol,
+    eos::AbstractEOS,
     pressure::Real,
     entropy::Real,
 )
-    equation_of_state = _get_equation_of_state(registry, composition)
-    return equation_of_state.enthalpy_from_pressure_entropy(pressure, entropy)
+    _not_implemented(eos, :enthalpy_from_pressure_entropy)
+end
+
+"""
+Default isentropic enthalpy helper for any EOS model.
+
+Computes:
+1. `entropy_1 = entropy(eos, pressure_1, enthalpy_1)`
+2. `h_2s = enthalpy_from_pressure_entropy(eos, pressure_2, entropy_1)`
+"""
+function isentropic_enthalpy(
+    eos::AbstractEOS,
+    pressure_1::Real,
+    enthalpy_1::Real,
+    pressure_2::Real,
+)
+    entropy_1 = entropy(eos, pressure_1, enthalpy_1)
+    return enthalpy_from_pressure_entropy(eos, pressure_2, entropy_1)
+end
+
+"""
+EOS registry mapping composition ids to concrete EOS models.
+"""
+const EquationsOfStateRegistry = Dict{Symbol,AbstractEOS}
+
+"""
+Build a registry using placeholder real-fluid EOS models.
+
+`AirEOS` and `SteamEOS` currently raise `not implemented` errors until their
+property functions are filled in.
+"""
+function real_EOS()
+    return EquationsOfStateRegistry(
+        :air => AirEOS(),
+        :steam => SteamEOS(),
+    )
+end
+
+"""
+Build a registry using ideal-gas EOS models for air and steam.
+"""
+function ideal_EOS()
+    air = IdealGasEOS(:air; gas_constant=287.05, gamma=1.4)
+    steam = IdealGasEOS(:steam; gas_constant=461.5, gamma=1.33)
+    return EquationsOfStateRegistry(
+        :air => air,
+        :steam => steam,
+    )
 end

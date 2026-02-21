@@ -1,109 +1,109 @@
 """
-Steam composition marker.
+Steam EOS marker.
 
 Placeholder type for future steam-property implementation.
 """
-struct SteamComposition <: AbstractComposition
+struct SteamEOS <: AbstractEOS
 end
 
-function temperature_from_enthalpy(::SteamComposition, enthalpy::Real)
-    error("temperature_from_enthalpy for SteamComposition is not implemented")
+function temperature_from_enthalpy(::SteamEOS, enthalpy::Real)
+    error("temperature_from_enthalpy for SteamEOS is not implemented")
 end
 
-function enthalpy_from_temperature(::SteamComposition, temperature::Real)
-    error("enthalpy_from_temperature for SteamComposition is not implemented")
+function enthalpy_from_temperature(::SteamEOS, temperature::Real)
+    error("enthalpy_from_temperature for SteamEOS is not implemented")
 end
 
 function density_from_pressure_temperature(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     temperature::Real,
 )
-    error("density_from_pressure_temperature for SteamComposition is not implemented")
+    error("density_from_pressure_temperature for SteamEOS is not implemented")
 end
 
 function density_from_pressure_enthalpy(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("density_from_pressure_enthalpy for SteamComposition is not implemented")
+    error("density_from_pressure_enthalpy for SteamEOS is not implemented")
 end
 
 function speed_of_sound_from_temperature(
-    ::SteamComposition,
+    ::SteamEOS,
     temperature::Real,
 )
-    error("speed_of_sound_from_temperature for SteamComposition is not implemented")
+    error("speed_of_sound_from_temperature for SteamEOS is not implemented")
 end
 
 function speed_of_sound_from_enthalpy(
-    ::SteamComposition,
+    ::SteamEOS,
     enthalpy::Real,
 )
-    error("speed_of_sound_from_enthalpy for SteamComposition is not implemented")
+    error("speed_of_sound_from_enthalpy for SteamEOS is not implemented")
 end
 
 function temperature(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("temperature for SteamComposition is not implemented")
+    error("temperature for SteamEOS is not implemented")
 end
 
 function entropy(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("entropy for SteamComposition is not implemented")
+    error("entropy for SteamEOS is not implemented")
 end
 
 function speed_of_sound(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("speed_of_sound for SteamComposition is not implemented")
+    error("speed_of_sound for SteamEOS is not implemented")
 end
 
 function heat_capacity_cp(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("heat_capacity_cp for SteamComposition is not implemented")
+    error("heat_capacity_cp for SteamEOS is not implemented")
 end
 
 function dynamic_viscosity(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("dynamic_viscosity for SteamComposition is not implemented")
+    error("dynamic_viscosity for SteamEOS is not implemented")
 end
 
 function thermal_conductivity(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("thermal_conductivity for SteamComposition is not implemented")
+    error("thermal_conductivity for SteamEOS is not implemented")
 end
 
 function phase(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     enthalpy::Real,
 )
-    error("phase for SteamComposition is not implemented")
+    error("phase for SteamEOS is not implemented")
 end
 
 function enthalpy_from_pressure_entropy(
-    ::SteamComposition,
+    ::SteamEOS,
     pressure::Real,
     entropy::Real,
 )
-    error("enthalpy_from_pressure_entropy for SteamComposition is not implemented")
+    error("enthalpy_from_pressure_entropy for SteamEOS is not implemented")
 end

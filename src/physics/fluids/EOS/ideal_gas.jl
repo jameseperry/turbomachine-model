@@ -1,5 +1,5 @@
 """
-Ideal-gas composition parameters.
+Ideal-gas EOS parameters.
 
 Fields:
 - `id`: composition identifier (e.g. `:air`, `:steam`).
@@ -15,7 +15,7 @@ Fields:
 - `temperature_reference`: reference temperature for entropy in K.
 - `entropy_reference`: reference specific entropy in J/(kg*K).
 """
-struct IdealGasComposition <: AbstractComposition
+struct IdealGasEOS <: AbstractEOS
     id::Symbol
     gas_constant::Float64
     specific_heat_cp::Float64
@@ -30,7 +30,7 @@ struct IdealGasComposition <: AbstractComposition
     entropy_reference::Float64
 end
 
-function IdealGasComposition(
+function IdealGasEOS(
     id::Symbol;
     gas_constant::Real,
     specific_heat_cp::Union{Nothing,Real}=nothing,
@@ -57,7 +57,7 @@ function IdealGasComposition(
         g > 1 || error("gamma must be > 1")
         cv = gas_constant / (g - 1)
         cp = g * cv
-        return IdealGasComposition(
+        return IdealGasEOS(
             id,
             Float64(gas_constant),
             Float64(cp),
@@ -87,7 +87,7 @@ function IdealGasComposition(
     g = cp / cv
     g > 1 || error("gamma must be > 1")
 
-    return IdealGasComposition(
+    return IdealGasEOS(
         id,
         Float64(gas_constant),
         Float64(cp),
@@ -106,7 +106,7 @@ end
 """
 Specific enthalpy from temperature: `h = cp * T`.
 """
-function enthalpy_from_temperature(comp::IdealGasComposition, temperature::Real)
+function enthalpy_from_temperature(comp::IdealGasEOS, temperature::Real)
     temperature > 0 || error("temperature must be > 0")
     return comp.specific_heat_cp * temperature
 end
@@ -114,7 +114,7 @@ end
 """
 Temperature from specific enthalpy: `T = h / cp`.
 """
-function temperature_from_enthalpy(comp::IdealGasComposition, enthalpy::Real)
+function temperature_from_enthalpy(comp::IdealGasEOS, enthalpy::Real)
     enthalpy > 0 || error("enthalpy must be > 0")
     return enthalpy / comp.specific_heat_cp
 end
@@ -123,7 +123,7 @@ end
 Density from pressure and temperature: `rho = p / (R * T)`.
 """
 function density_from_pressure_temperature(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     temperature::Real,
 )
@@ -136,7 +136,7 @@ end
 Density from pressure and specific enthalpy.
 """
 function density_from_pressure_enthalpy(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     enthalpy::Real,
 )
@@ -145,7 +145,7 @@ function density_from_pressure_enthalpy(
 end
 
 function density(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     enthalpy::Real,
 )
@@ -156,7 +156,7 @@ end
 Speed of sound from temperature: `a = sqrt(gamma * R * T)`.
 """
 function speed_of_sound_from_temperature(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     temperature::Real,
 )
     temperature > 0 || error("temperature must be > 0")
@@ -167,7 +167,7 @@ end
 Speed of sound from specific enthalpy.
 """
 function speed_of_sound_from_enthalpy(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     enthalpy::Real,
 )
     temperature = temperature_from_enthalpy(comp, enthalpy)
@@ -175,7 +175,7 @@ function speed_of_sound_from_enthalpy(
 end
 
 function temperature(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     enthalpy::Real,
 )
@@ -184,7 +184,7 @@ function temperature(
 end
 
 function entropy(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     enthalpy::Real,
 )
@@ -196,7 +196,7 @@ function entropy(
 end
 
 function speed_of_sound(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     enthalpy::Real,
 )
@@ -205,7 +205,7 @@ function speed_of_sound(
 end
 
 function heat_capacity_cp(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     enthalpy::Real,
 )
@@ -215,7 +215,7 @@ function heat_capacity_cp(
 end
 
 function dynamic_viscosity(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     enthalpy::Real,
 )
@@ -228,7 +228,7 @@ function dynamic_viscosity(
 end
 
 function thermal_conductivity(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     enthalpy::Real,
 )
@@ -238,7 +238,7 @@ function thermal_conductivity(
 end
 
 function phase(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     enthalpy::Real,
 )
@@ -248,7 +248,7 @@ function phase(
 end
 
 function enthalpy_from_pressure_entropy(
-    comp::IdealGasComposition,
+    comp::IdealGasEOS,
     pressure::Real,
     entropy::Real,
 )
