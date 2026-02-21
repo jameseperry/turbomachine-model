@@ -7,12 +7,28 @@
     @test :inlet in keys(F.port_specs(cmb))
     @test :outlet in keys(F.port_specs(cmb))
 
+    pln = C.Plenum(volume=0.25)
+    @test :inlet in keys(F.port_specs(pln))
+    @test :outlet in keys(F.port_specs(pln))
+    @test F.port_specs(pln)[:inlet].domain == :fluid
+    @test F.port_specs(pln)[:outlet].domain == :fluid
+    @test_throws ErrorException C.Plenum(volume=0.0)
+
     shaft = C.InertialShaft(J=0.35, damping=0.01, n_ports=3)
     shaft_ports = keys(F.port_specs(shaft))
     @test length(collect(shaft_ports)) == 3
     @test :shaft1 in shaft_ports
     @test :shaft2 in shaft_ports
     @test :shaft3 in shaft_ports
+
+    gb = C.Gearbox(ratio=2.5, efficiency=0.98)
+    gb_ports = keys(F.port_specs(gb))
+    @test :input in gb_ports
+    @test :output in gb_ports
+    @test F.port_specs(gb)[:input].domain == :shaft
+    @test F.port_specs(gb)[:output].domain == :shaft
+    @test_throws ErrorException C.Gearbox(ratio=0.0)
+    @test_throws ErrorException C.Gearbox(ratio=2.0, efficiency=0.0)
 
     pm = P.PerformanceMap(
         300.0,
