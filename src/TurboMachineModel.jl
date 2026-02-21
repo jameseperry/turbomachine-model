@@ -1,13 +1,17 @@
 module TurboMachineModel
 
-include("framework/Framework.jl")
+include("port.jl")
+include("component.jl")
+include("network.jl")
 include("physics/Physics.jl")
 include("components/Components.jl")
 
-using .Framework
+using .Port
+using .Component
+using .Network
 using .Physics
 using .Components
 
-export Framework, Physics, Components
+export Port, Component, Network, Physics, Components
 
 end # module TurboMachineModel

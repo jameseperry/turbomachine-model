@@ -1,32 +1,32 @@
 @testset "Components" begin
-    F = TurboMachineModel.Framework
+    F = TurboMachineModel.Component
     C = TurboMachineModel.Components
     P = TurboMachineModel.Physics.Fluids
 
     cmb = C.Combustor(0.04, 43e6, NamedTuple())
-    @test :inlet in keys(F.port_specs(cmb))
-    @test :outlet in keys(F.port_specs(cmb))
+    @test :inlet in keys(F.ports(cmb))
+    @test :outlet in keys(F.ports(cmb))
 
     pln = C.Plenum(volume=0.25)
-    @test :inlet in keys(F.port_specs(pln))
-    @test :outlet in keys(F.port_specs(pln))
-    @test F.port_specs(pln)[:inlet].domain == :fluid
-    @test F.port_specs(pln)[:outlet].domain == :fluid
+    @test :inlet in keys(F.ports(pln))
+    @test :outlet in keys(F.ports(pln))
+    @test haskey(F.ports(pln)[:inlet].variable_ids, :pt)
+    @test haskey(F.ports(pln)[:outlet].variable_ids, :ht)
     @test_throws ErrorException C.Plenum(volume=0.0)
 
     shaft = C.InertialShaft(J=0.35, damping=0.01, n_ports=3)
-    shaft_ports = keys(F.port_specs(shaft))
+    shaft_ports = keys(F.ports(shaft))
     @test length(collect(shaft_ports)) == 3
     @test :shaft1 in shaft_ports
     @test :shaft2 in shaft_ports
     @test :shaft3 in shaft_ports
 
     gb = C.Gearbox(ratio=2.5, efficiency=0.98)
-    gb_ports = keys(F.port_specs(gb))
+    gb_ports = keys(F.ports(gb))
     @test :input in gb_ports
     @test :output in gb_ports
-    @test F.port_specs(gb)[:input].domain == :shaft
-    @test F.port_specs(gb)[:output].domain == :shaft
+    @test haskey(F.ports(gb)[:input].variable_ids, :omega)
+    @test haskey(F.ports(gb)[:output].variable_ids, :tau)
     @test_throws ErrorException C.Gearbox(ratio=0.0)
     @test_throws ErrorException C.Gearbox(ratio=2.0, efficiency=0.0)
 
@@ -44,7 +44,6 @@
         eta_guess=0.9,
     )
     @test tm.mode == :compressor
-    @test :inlet in keys(F.port_specs(tm))
-    inlet_vars = first(F.port_specs(tm)[:inlet].vars)
-    @test inlet_vars.var == :pt
+    @test :inlet in keys(F.ports(tm))
+    @test haskey(F.ports(tm)[:inlet].variable_ids, :pt)
 end

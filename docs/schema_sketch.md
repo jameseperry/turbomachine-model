@@ -4,6 +4,8 @@ This document defines a component-first internal schema for engine modeling in J
 
 Core idea: you instantiate concrete component types (`CompressorSection`, `Combustor`, `TurbineSection`, etc.) directly. Parameters are constructor arguments for each component type, not fields on a generic `ComponentInstance` record.
 
+Current implementation status: the live code currently exposes only a minimal structural network API in `src/network.jl` (`Network`, `EndpointRef`, `add_component!`, `connect!`). The rest of this document is forward-looking design.
+
 ## 1. Design Principles
 
 1. Concrete component types carry behavior.
@@ -105,13 +107,10 @@ These functions are used to construct and validate a legal model graph.
 Required:
 
 1. `port_specs(c)::Dict{Symbol,PortSpec}`
-2. `required_ports(c)::Vector{Symbol}`  # ports that must be connected or boundary-constrained
-3. `validate(c)::Nothing`  # throw with clear message on invalid configuration
 
 Recommended:
 
-1. `boundary_targets(c)::Vector{Tuple{Symbol,Symbol}}`  # `(port_id, var)` pairs that may accept boundaries
-2. `parameter_symbols(c)::Vector{Symbol}`  # for diagnostics/config tooling
+1. `parameter_symbols(c)::Vector{Symbol}`  # for diagnostics/config tooling
 
 ### 3.2 Equation / Integration Support Functions
 
@@ -137,15 +136,14 @@ Required:
 
 1. Access to current values of component-owned unknowns.
 2. Access to connected port variable values.
-3. Access to boundary values affecting this component.
-4. Access to simulation time and constant model parameters.
+3. Access to simulation time and constant model parameters.
 
 ## 4. Port Typing and Compatibility (Draft)
 
 Port typing is explicit so connection validation can be deterministic.
 `Unitful.jl` is used for unit metadata and compatibility checks.
 Connections are ideal interfaces in this model, so transported properties are equality-coupled.
-Connections are strictly 2-port only (`connect!`/`validate_network` enforce max one connection per endpoint).
+Connections are strictly 2-port only (`connect!` enforces max one connection per endpoint).
 
 ```julia
 using Unitful
@@ -183,8 +181,7 @@ For each connection `(from, to, vars)`:
 6. For `:equality`, add `X_from = X_to`.
 7. For `:conservation`, add `X_from + X_to = 0` using outward-positive convention on both ports.
 8. Require unit convertibility for each coupled variable (`uconvert`-compatible).
-9. Command targets are boundary-only by convention (`bc_type=:prescribed_input`) and should not appear in `connections`.
-10. (Optional, strict mode) require exact same units in addition to convertibility.
+9. (Optional, strict mode) require exact same units in addition to convertibility.
 
 ### 4.2 Coupling Equation Intent
 
@@ -266,14 +263,9 @@ These are concrete examples of port variable sets for turbomachinery models.
 - `(var=:omega, unit=u"rad/s", coupling=:equality)`
 - `(var=:tau_load, unit=u"N*m", coupling=:conservation)`
 
-### 6.7 Command Variables (Boundary-Only)
+### 6.7 Command Variables
 
-Commands are modeled as boundary conditions, not connection-coupled port variables.
-
-Examples:
-
-- `(id=:u1, target=EndpointRef(:cmp,:vsv_angle_cmd), bc_type=:prescribed_input, value_spec=0.12u"rad", priority=10)`
-- `(id=:u2, target=EndpointRef(:nozzle,:area_cmd), bc_type=:prescribed_input, value_spec=0.015u"m^2", priority=10)`
+Command interfaces are future work and not part of the current minimal `Network` API.
 
 ## 7. Example Usage Sketch
 
@@ -327,12 +319,12 @@ network = Network(
 
 ## 8. Assembly Flow
 
-1. Validate components via dispatch (`validate(c)` when provided).
+1. Validate component constructor invariants.
 2. Validate referenced ports against `port_specs(c)`.
-3. Validate connection compatibility and boundary consistency.
+3. Validate connection compatibility.
 4. Build global variable index from component states and connection variables.
 5. Assemble local component equations via `equations!`.
-6. Add connection equations by coupling type (`:equality -> X_from = X_to`, `:conservation -> X_from + X_to = 0`) plus boundary equations.
+6. Add connection equations by coupling type (`:equality -> X_from = X_to`, `:conservation -> X_from + X_to = 0`).
 7. Gather initial conditions from each component and form final ODE/DAE problem data (assembly/solver options are function arguments).
 
 ## 9. Notes

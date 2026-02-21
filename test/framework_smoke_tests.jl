@@ -1,9 +1,14 @@
-@testset "Framework Smoke" begin
-    @test isdefined(TurboMachineModel, :Framework)
+@testset "Network Smoke" begin
+    @test isdefined(TurboMachineModel, :Port)
+    @test isdefined(TurboMachineModel, :Component)
+    @test isdefined(TurboMachineModel, :Network)
     @test isdefined(TurboMachineModel, :Physics)
     @test isdefined(TurboMachineModel, :Components)
-    @test isdefined(TurboMachineModel.Framework, :Network)
-    @test isdefined(TurboMachineModel.Framework, :PortSpec)
+    @test isdefined(TurboMachineModel.Network, :Network)
+    @test isdefined(TurboMachineModel.Port, :PortShape)
+    @test isdefined(TurboMachineModel.Component, :ComponentPort)
+    @test isdefined(TurboMachineModel.Network, :add_component!)
+    @test isdefined(TurboMachineModel.Network, :connect!)
     @test isdefined(TurboMachineModel.Components, :AbstractComponent)
     @test isdefined(TurboMachineModel.Components, :Combustor)
     @test isdefined(TurboMachineModel.Components, :TurboMachineSection)

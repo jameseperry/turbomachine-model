@@ -1,7 +1,7 @@
 module Components
 
-import ..Framework: AbstractComponent, port_specs, required_ports, validate
-using ..Framework: FLUID_PORT, SHAFT_PORT
+import ..Component: AbstractComponent, ports, variables
+using ..Component: ComponentPort, ComponentVariable
 using ..Physics.Fluids: PerformanceMap
 
 include("combustor.jl")
@@ -10,7 +10,7 @@ include("turbo_machine_section.jl")
 include("inertial_shaft.jl")
 include("gearbox.jl")
 
-export AbstractComponent, Combustor, Plenum, TurboMachineSection, InertialShaft, Gearbox
+export Combustor, Plenum, TurboMachineSection, InertialShaft, Gearbox
 
 """
 Namespace for concrete component implementations

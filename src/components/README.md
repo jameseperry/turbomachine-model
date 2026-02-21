@@ -10,31 +10,19 @@ All components should subtype:
 
 Defined in:
 
-- `src/framework/component_api.jl`
+- `src/component.jl`
 
 ## Required Structural Interface
 
 These methods are required for structural model assembly.
 
-1. `port_specs(c)::Dict{Symbol,Any}`
+1. `ports(c)::Dict{Symbol,Any}`
 - Returns port specs by port name.
-- Port specs should follow the shape used by framework presets and `Framework.PortSpec`.
-
-2. `required_ports(c)::Vector{Symbol}`
-- Returns the list of required ports for this component.
-- Each required port must be connected or boundary-constrained by model validation.
-
-3. `validate(c)::AbstractComponent`
-- Validates component parameters and invariants.
-- Should throw a descriptive error on invalid configuration.
-- Returns `c` when valid (convention used in constructors).
+- Port specs should follow the shape used by component presets and `Component.ComponentPort`.
 
 ## Optional Structural Interface
 
-1. `boundary_targets(c)::Vector{Tuple{Symbol,Symbol}}`
-- Allowed boundary targets as `(port_id, variable)` pairs.
-
-2. `parameter_symbols(c)::Vector{Symbol}`
+1. `parameter_symbols(c)::Vector{Symbol}`
 - Parameter names for diagnostics/config tooling.
 
 ## Optional Integration Interface
@@ -55,8 +43,7 @@ These are not required for structural-only assembly, but are expected for simula
 
 ## Conventions
 
-1. Keep port definitions centralized where possible using `PortPresets`.
-  Source: `src/framework/port_presets.jl`.
+1. Keep port definitions explicit in each component constructor via `ComponentPort`.
 2. Use outward-positive sign convention for through variables.
-3. Keep connection semantics in framework/validation code; keep component files focused on component behavior and invariants.
-4. Network topology is managed in `src/framework` (`Network`, `EndpointRef`, `connect!`, `validate_network`).
+3. Keep network semantics in `src/network.jl`; keep component files focused on component behavior and invariants.
+4. Network topology is managed in `src/network.jl` (`Network`, `EndpointRef`, `add_component!`, `connect!`).
