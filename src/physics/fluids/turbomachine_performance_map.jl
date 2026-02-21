@@ -2,24 +2,28 @@
 Map wrapper for compressor/turbine performance data with correction helpers.
 
 Table convention:
-- `n_corr_grid` is corrected shaft speed axis.
-- `w_corr_grid` is corrected mass-flow axis.
+- `omega_corr_grid` is corrected shaft speed axis.
+- `mdot_corr_grid` is corrected mass-flow axis.
 - `pr_table[i, j]` and `eta_table[i, j]` correspond to
-  `n_corr_grid[i]`, `w_corr_grid[j]`.
+  `omega_corr_grid[i]`, `mdot_corr_grid[j]`.
+  Here:
+  - `PR` means total-pressure ratio (`Pt_out / Pt_in`).
+  - `eta` means adiabatic efficiency (same as isentropic efficiency in this model).
 
 Parameters:
 - `Tt_ref`: reference total temperature used for corrected-value normalization.
 - `Pt_ref`: reference total pressure used for corrected-value normalization.
-- `n_corr_grid`: corrected speed grid (ascending).
-- `w_corr_grid`: corrected mass-flow grid (ascending).
-- `pr_table`: pressure-ratio lookup table over (`n_corr_grid`, `w_corr_grid`).
-- `eta_table`: isentropic-efficiency lookup table over (`n_corr_grid`, `w_corr_grid`).
+- `omega_corr_grid`: corrected speed grid (ascending).
+- `mdot_corr_grid`: corrected mass-flow grid (ascending).
+- `pr_table`: pressure-ratio lookup table over (`omega_corr_grid`, `mdot_corr_grid`).
+- `eta_table`: adiabatic-efficiency lookup table over (`omega_corr_grid`, `mdot_corr_grid`).
+  (`eta` is treated as isentropic efficiency here.)
 """
 struct PerformanceMap
     Tt_ref::Float64
     Pt_ref::Float64
-    n_corr_grid::Vector{Float64}
-    w_corr_grid::Vector{Float64}
+    omega_corr_grid::Vector{Float64}
+    mdot_corr_grid::Vector{Float64}
     pr_table::Matrix{Float64}
     eta_table::Matrix{Float64}
 end
@@ -27,27 +31,27 @@ end
 function PerformanceMap(
     Tt_ref::Real,
     Pt_ref::Real,
-    n_corr_grid::Vector{<:Real},
-    w_corr_grid::Vector{<:Real},
+    omega_corr_grid::Vector{<:Real},
+    mdot_corr_grid::Vector{<:Real},
     pr_table::Matrix{<:Real},
     eta_table::Matrix{<:Real},
 )
     Tt_ref > 0 || error("Tt_ref must be > 0")
     Pt_ref > 0 || error("Pt_ref must be > 0")
-    length(n_corr_grid) >= 2 || error("n_corr_grid must have at least 2 points")
-    length(w_corr_grid) >= 2 || error("w_corr_grid must have at least 2 points")
-    issorted(n_corr_grid) || error("n_corr_grid must be sorted ascending")
-    issorted(w_corr_grid) || error("w_corr_grid must be sorted ascending")
-    size(pr_table) == (length(n_corr_grid), length(w_corr_grid)) ||
-        error("pr_table size must match (length(n_corr_grid), length(w_corr_grid))")
-    size(eta_table) == (length(n_corr_grid), length(w_corr_grid)) ||
-        error("eta_table size must match (length(n_corr_grid), length(w_corr_grid))")
+    length(omega_corr_grid) >= 2 || error("omega_corr_grid must have at least 2 points")
+    length(mdot_corr_grid) >= 2 || error("mdot_corr_grid must have at least 2 points")
+    issorted(omega_corr_grid) || error("omega_corr_grid must be sorted ascending")
+    issorted(mdot_corr_grid) || error("mdot_corr_grid must be sorted ascending")
+    size(pr_table) == (length(omega_corr_grid), length(mdot_corr_grid)) ||
+        error("pr_table size must match (length(omega_corr_grid), length(mdot_corr_grid))")
+    size(eta_table) == (length(omega_corr_grid), length(mdot_corr_grid)) ||
+        error("eta_table size must match (length(omega_corr_grid), length(mdot_corr_grid))")
 
     return PerformanceMap(
         Float64(Tt_ref),
         Float64(Pt_ref),
-        Float64.(n_corr_grid),
-        Float64.(w_corr_grid),
+        Float64.(omega_corr_grid),
+        Float64.(mdot_corr_grid),
         Float64.(pr_table),
         Float64.(eta_table),
     )
@@ -56,8 +60,8 @@ end
 """
 Corrected shaft speed from physical speed and local total temperature.
 """
-corrected_speed(N::Real, Tt_in::Real, Tt_ref::Real) =
-    N / sqrt(Tt_in / Tt_ref)
+corrected_speed(omega::Real, Tt_in::Real, Tt_ref::Real) =
+    omega / sqrt(Tt_in / Tt_ref)
 
 """
 Corrected mass flow from physical flow and local total conditions.
@@ -65,8 +69,8 @@ Corrected mass flow from physical flow and local total conditions.
 corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, Tt_ref::Real, Pt_ref::Real) =
     mdot * sqrt(Tt_in / Tt_ref) / (Pt_in / Pt_ref)
 
-corrected_speed(N::Real, Tt_in::Real, map::PerformanceMap) =
-    corrected_speed(N, Tt_in, map.Tt_ref)
+corrected_speed(omega::Real, Tt_in::Real, map::PerformanceMap) =
+    corrected_speed(omega, Tt_in, map.Tt_ref)
 
 corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, map::PerformanceMap) =
     corrected_flow(mdot, Tt_in, Pt_in, map.Tt_ref, map.Pt_ref)
@@ -107,38 +111,58 @@ function _bilinear(
 end
 
 """
-Interpolate pressure ratio and isentropic efficiency at corrected coordinates.
+Interpolate pressure ratio and adiabatic efficiency at corrected coordinates.
+
+Return fields:
+- `PR`: total-pressure ratio (`Pt_out / Pt_in`).
+- `eta`: adiabatic efficiency (isentropic efficiency in this model).
 """
-function map_pr_eta(map::PerformanceMap, N_corr::Real, W_corr::Real)
-    n = Float64(N_corr)
-    w = Float64(W_corr)
-    PR = _bilinear(n, w, map.n_corr_grid, map.w_corr_grid, map.pr_table)
-    eta = _bilinear(n, w, map.n_corr_grid, map.w_corr_grid, map.eta_table)
+function map_pr_eta(map::PerformanceMap, omega_corr::Real, mdot_corr::Real)
+    omega_corr_f = Float64(omega_corr)
+    mdot_corr_f = Float64(mdot_corr)
+    PR = _bilinear(
+        omega_corr_f,
+        mdot_corr_f,
+        map.omega_corr_grid,
+        map.mdot_corr_grid,
+        map.pr_table,
+    )
+    eta = _bilinear(
+        omega_corr_f,
+        mdot_corr_f,
+        map.omega_corr_grid,
+        map.mdot_corr_grid,
+        map.eta_table,
+    )
     return (PR=PR, eta=eta)
 end
 
 """
-Compute corrected coordinates and return `(N_corr, W_corr, PR, eta)` from
+Compute corrected coordinates and return `(omega_corr, mdot_corr, PR, eta)` from
 physical shaft speed, mass flow, and local stagnation conditions.
+
+Returned `PR` and `eta` follow the same definitions as `map_pr_eta`:
+- `PR = Pt_out / Pt_in`
+- `eta` is adiabatic (isentropic) efficiency.
 
 Parameters:
 - `map`: performance map wrapper.
-- `N`: physical shaft speed.
+- `omega`: physical shaft speed.
 - `mdot`: physical mass flow rate.
 - `Tt_in`: local total (stagnation) temperature at the component inlet station.
 - `Pt_in`: local total (stagnation) pressure at the component inlet station.
 """
 function map_pr_eta_from_stagnation(
     map::PerformanceMap,
-    N::Real,
+    omega::Real,
     mdot::Real,
     Tt_in::Real,
     Pt_in::Real,
 )
-    N_corr = corrected_speed(N, Tt_in, map)
-    W_corr = corrected_flow(mdot, Tt_in, Pt_in, map)
-    vals = map_pr_eta(map, N_corr, W_corr)
-    return (N_corr=N_corr, W_corr=W_corr, PR=vals.PR, eta=vals.eta)
+    omega_corr = corrected_speed(omega, Tt_in, map)
+    mdot_corr = corrected_flow(mdot, Tt_in, Pt_in, map)
+    vals = map_pr_eta(map, omega_corr, mdot_corr)
+    return (omega_corr=omega_corr, mdot_corr=mdot_corr, PR=vals.PR, eta=vals.eta)
 end
 
 """

@@ -32,8 +32,8 @@
     @test isapprox(vals.eta, 0.86; rtol=1e-12)
 
     from_inlet = P.map_pr_eta_from_stagnation(pm, 10_000.0, 15.0, 300.0, 100_000.0)
-    @test isapprox(from_inlet.N_corr, 10_000.0; rtol=1e-12)
-    @test isapprox(from_inlet.W_corr, 15.0; rtol=1e-12)
+    @test isapprox(from_inlet.omega_corr, 10_000.0; rtol=1e-12)
+    @test isapprox(from_inlet.mdot_corr, 15.0; rtol=1e-12)
     @test isapprox(from_inlet.PR, 4.5; rtol=1e-12)
     @test isapprox(from_inlet.eta, 0.91; rtol=1e-12)
 
