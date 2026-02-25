@@ -1,11 +1,12 @@
 module Physics
 
 include("fluids/Fluids.jl")
-include("turbomachine.jl")
+include("turbomachine/Turbomachine.jl")
 
 using .Fluids
+using .Turbomachine
 
 export Fluids
-export turbomachine_residuals
+export Turbomachine
 
 end # module Physics

@@ -12,7 +12,7 @@ Fields:
 """
 struct Turbomachine <: AbstractComponent
     mode::Symbol
-    performance_map::PerformanceMap
+    performance_map::AbstractPerformanceMap
     eta_guess::Float64
     init::NamedTuple
     port_list::Vector{ComponentPort}
@@ -22,7 +22,7 @@ end
 
 function Turbomachine(;
     mode::Symbol,
-    performance_map::PerformanceMap,
+    performance_map::AbstractPerformanceMap,
     eta_guess::Real,
     init::NamedTuple=NamedTuple(),
 )

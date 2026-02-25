@@ -30,6 +30,10 @@ struct IdealGasEOS <: AbstractEOS
     entropy_reference::Float64
 end
 
+@inline _eos_primal_value(x::Real) = hasfield(typeof(x), :value) ? getfield(x, :value) : x
+@inline _assert_positive(x::Real, name::AbstractString) =
+    _eos_primal_value(x) > 0 || error("$name must be > 0")
+
 function IdealGasEOS(
     id::Symbol;
     gas_constant::Real,
@@ -107,7 +111,7 @@ end
 Specific enthalpy from temperature: `h = cp * T`.
 """
 function enthalpy_from_temperature(comp::IdealGasEOS, temperature::Real)
-    temperature > 0 || error("temperature must be > 0")
+    _assert_positive(temperature, "temperature")
     return comp.specific_heat_cp * temperature
 end
 
@@ -115,7 +119,7 @@ end
 Temperature from specific enthalpy: `T = h / cp`.
 """
 function temperature_from_enthalpy(comp::IdealGasEOS, enthalpy::Real)
-    enthalpy > 0 || error("enthalpy must be > 0")
+    _assert_positive(enthalpy, "enthalpy")
     return enthalpy / comp.specific_heat_cp
 end
 
@@ -127,8 +131,8 @@ function density_from_pressure_temperature(
     pressure::Real,
     temperature::Real,
 )
-    pressure > 0 || error("pressure must be > 0")
-    temperature > 0 || error("temperature must be > 0")
+    _assert_positive(pressure, "pressure")
+    _assert_positive(temperature, "temperature")
     return pressure / (comp.gas_constant * temperature)
 end
 
@@ -159,7 +163,7 @@ function speed_of_sound_from_temperature(
     comp::IdealGasEOS,
     temperature::Real,
 )
-    temperature > 0 || error("temperature must be > 0")
+    _assert_positive(temperature, "temperature")
     return sqrt(comp.gamma * comp.gas_constant * temperature)
 end
 
@@ -179,7 +183,7 @@ function temperature(
     pressure::Real,
     enthalpy::Real,
 )
-    pressure > 0 || error("pressure must be > 0")
+    _assert_positive(pressure, "pressure")
     return temperature_from_enthalpy(comp, enthalpy)
 end
 
@@ -188,7 +192,7 @@ function entropy(
     pressure::Real,
     enthalpy::Real,
 )
-    pressure > 0 || error("pressure must be > 0")
+    _assert_positive(pressure, "pressure")
     temperature = temperature_from_enthalpy(comp, enthalpy)
     return comp.entropy_reference +
            comp.specific_heat_cp * log(temperature / comp.temperature_reference) -
@@ -209,8 +213,8 @@ function heat_capacity_cp(
     pressure::Real,
     enthalpy::Real,
 )
-    pressure > 0 || error("pressure must be > 0")
-    enthalpy > 0 || error("enthalpy must be > 0")
+    _assert_positive(pressure, "pressure")
+    _assert_positive(enthalpy, "enthalpy")
     return comp.specific_heat_cp
 end
 
@@ -242,8 +246,8 @@ function phase(
     pressure::Real,
     enthalpy::Real,
 )
-    pressure > 0 || error("pressure must be > 0")
-    enthalpy > 0 || error("enthalpy must be > 0")
+    _assert_positive(pressure, "pressure")
+    _assert_positive(enthalpy, "enthalpy")
     return :gas
 end
 
@@ -252,7 +256,7 @@ function enthalpy_from_pressure_entropy(
     pressure::Real,
     entropy::Real,
 )
-    pressure > 0 || error("pressure must be > 0")
+    _assert_positive(pressure, "pressure")
     temperature = comp.temperature_reference * exp(
         (entropy - comp.entropy_reference +
          comp.gas_constant * log(pressure / comp.pressure_reference)) /

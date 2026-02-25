@@ -6,7 +6,6 @@ include("EOS/air.jl")
 include("EOS/steam.jl")
 include("stagnation_relations.jl")
 include("flow_energy_relations.jl")
-include("turbomachine_performance_map.jl")
 
 export AbstractEOS, AirEOS, SteamEOS, IdealGasEOS
 export EquationsOfStateRegistry
@@ -21,8 +20,5 @@ export static_temperature_from_total, total_temperature_from_static
 export static_pressure_from_total, total_pressure_from_static
 export static_enthalpy_from_total, total_enthalpy_from_static
 export velocity_from_massflow, velocity_from_ph_mdot
-export PerformanceMap, corrected_speed, corrected_flow
-export map_pr_eta, map_pr_eta_from_stagnation
-export demo_compressor_map, demo_turbine_map
 
 end # module Fluids

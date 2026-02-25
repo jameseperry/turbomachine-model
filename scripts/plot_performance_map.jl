@@ -3,37 +3,37 @@
 using TurboMachineModel
 using Plots
 
-const Fluids = TurboMachineModel.Physics.Fluids
+const TM = TurboMachineModel.Physics.Turbomachine
 
 """
-    plot_performance_map(map::Fluids.PerformanceMap; title_prefix="Performance Map")
+    plot_performance_map(map::TM.TabulatedPerformanceMap; title_prefix="Performance Map")
 
 Create a 2-panel contour plot for `PR` and `eta` over corrected flow/speed.
 """
-function plot_performance_map(map::Fluids.PerformanceMap; title_prefix::String="Performance Map")
+function plot_performance_map(map::TM.TabulatedPerformanceMap; title_prefix::String="Performance Map")
     p_pr = contour(
-        map.w_corr_grid,
-        map.n_corr_grid,
+        map.mdot_corr_grid,
+        map.omega_corr_grid,
         map.pr_table;
-        xlabel="Wcorr",
-        ylabel="Ncorr",
+        xlabel="mdot_corr",
+        ylabel="omega_corr",
         title="$(title_prefix): Pressure Ratio",
         colorbar_title="PR",
         linewidth=2,
     )
-    scatter!(p_pr, vec(repeat(map.w_corr_grid', length(map.n_corr_grid))), vec(repeat(map.n_corr_grid, 1, length(map.w_corr_grid))); ms=2, label=false)
+    scatter!(p_pr, vec(repeat(map.mdot_corr_grid', length(map.omega_corr_grid))), vec(repeat(map.omega_corr_grid, 1, length(map.mdot_corr_grid))); ms=2, label=false)
 
     p_eta = contour(
-        map.w_corr_grid,
-        map.n_corr_grid,
+        map.mdot_corr_grid,
+        map.omega_corr_grid,
         map.eta_table;
-        xlabel="Wcorr",
-        ylabel="Ncorr",
+        xlabel="mdot_corr",
+        ylabel="omega_corr",
         title="$(title_prefix): Isentropic Efficiency",
         colorbar_title="eta",
         linewidth=2,
     )
-    scatter!(p_eta, vec(repeat(map.w_corr_grid', length(map.n_corr_grid))), vec(repeat(map.n_corr_grid, 1, length(map.w_corr_grid))); ms=2, label=false)
+    scatter!(p_eta, vec(repeat(map.mdot_corr_grid', length(map.omega_corr_grid))), vec(repeat(map.omega_corr_grid, 1, length(map.mdot_corr_grid))); ms=2, label=false)
 
     return plot(p_pr, p_eta; layout=(1, 2), size=(1100, 450))
 end
@@ -44,9 +44,9 @@ function _main()
 
     map, title_prefix =
         if map_name == "compressor"
-            Fluids.demo_compressor_map(), "Demo Compressor Map"
+            TM.demo_compressor_performance_map(), "Demo Compressor Map"
         elseif map_name == "turbine"
-            Fluids.demo_turbine_map(), "Demo Turbine Map"
+            TM.demo_turbine_performance_map(), "Demo Turbine Map"
         else
             error("Unknown map kind '$map_name'. Use 'compressor' or 'turbine'.")
         end

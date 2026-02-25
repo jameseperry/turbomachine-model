@@ -2,6 +2,7 @@
     F = TurboMachineModel.Component
     C = TurboMachineModel.Components
     P = TurboMachineModel.Physics.Fluids
+    TM = TurboMachineModel.Physics.Turbomachine
     port_names(c) = Set(p.name for p in F.ports(c))
     has_mapping(c, port_name, label) =
         any(v -> any(m -> m.port == port_name && m.label == label, v.mappings), F.variables(c, :steady))
@@ -64,7 +65,7 @@
     @test_throws ErrorException C.Gearbox(ratio=0.0)
     @test_throws ErrorException C.Gearbox(ratio=2.0, efficiency=0.0)
 
-    pm = P.PerformanceMap(
+    pm = TM.TabulatedPerformanceMap(
         300.0,
         100_000.0,
         [1.0, 2.0],

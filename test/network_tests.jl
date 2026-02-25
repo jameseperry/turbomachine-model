@@ -2,10 +2,11 @@
     F = TurboMachineModel.Network
     C = TurboMachineModel.Components
     P = TurboMachineModel.Physics.Fluids
+    TM = TurboMachineModel.Physics.Turbomachine
 
     cmb = C.Combustor(0.04, 43e6, NamedTuple())
     shaft = C.InertialShaft(J=0.35, damping=0.01, n_ports=1)
-    pm = P.PerformanceMap(
+    pm = TM.TabulatedPerformanceMap(
         300.0,
         100_000.0,
         [1.0, 2.0],

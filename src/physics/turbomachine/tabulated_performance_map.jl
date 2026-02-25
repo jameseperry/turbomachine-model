@@ -1,25 +1,21 @@
 """
-Map wrapper for compressor/turbine performance data with correction helpers.
+Tabulated performance map implementation.
+"""
 
-Table convention:
-- `omega_corr_grid` is corrected shaft speed axis.
-- `mdot_corr_grid` is corrected mass-flow axis.
-- `pr_table[i, j]` and `eta_table[i, j]` correspond to
-  `omega_corr_grid[i]`, `mdot_corr_grid[j]`.
-  Here:
-  - `PR` means total-pressure ratio (`Pt_out / Pt_in`).
-  - `eta` means adiabatic efficiency (same as isentropic efficiency in this model).
+abstract type AbstractPerformanceMap end
 
-Parameters:
-- `Tt_ref`: reference total temperature used for corrected-value normalization.
-- `Pt_ref`: reference total pressure used for corrected-value normalization.
+"""
+Tabulated compressor/turbine performance map on corrected coordinates.
+
+Fields:
+- `Tt_ref`: reference total temperature for corrected normalization.
+- `Pt_ref`: reference total pressure for corrected normalization.
 - `omega_corr_grid`: corrected speed grid (ascending).
 - `mdot_corr_grid`: corrected mass-flow grid (ascending).
-- `pr_table`: pressure-ratio lookup table over (`omega_corr_grid`, `mdot_corr_grid`).
-- `eta_table`: adiabatic-efficiency lookup table over (`omega_corr_grid`, `mdot_corr_grid`).
-  (`eta` is treated as isentropic efficiency here.)
+- `pr_table`: total-pressure-ratio table (`Pt_out/Pt_in`).
+- `eta_table`: adiabatic-efficiency table.
 """
-struct PerformanceMap
+struct TabulatedPerformanceMap <: AbstractPerformanceMap
     Tt_ref::Float64
     Pt_ref::Float64
     omega_corr_grid::Vector{Float64}
@@ -28,7 +24,7 @@ struct PerformanceMap
     eta_table::Matrix{Float64}
 end
 
-function PerformanceMap(
+function TabulatedPerformanceMap(
     Tt_ref::Real,
     Pt_ref::Real,
     omega_corr_grid::Vector{<:Real},
@@ -47,7 +43,7 @@ function PerformanceMap(
     size(eta_table) == (length(omega_corr_grid), length(mdot_corr_grid)) ||
         error("eta_table size must match (length(omega_corr_grid), length(mdot_corr_grid))")
 
-    return PerformanceMap(
+    return TabulatedPerformanceMap(
         Float64(Tt_ref),
         Float64(Pt_ref),
         Float64.(omega_corr_grid),
@@ -57,45 +53,43 @@ function PerformanceMap(
     )
 end
 
-"""
-Corrected shaft speed from physical speed and local total temperature.
-"""
+"""Corrected shaft speed from physical speed and local total temperature."""
 corrected_speed(omega::Real, Tt_in::Real, Tt_ref::Real) =
     omega / sqrt(Tt_in / Tt_ref)
 
-"""
-Corrected mass flow from physical flow and local total conditions.
-"""
+"""Corrected mass flow from physical flow and local total conditions."""
 corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, Tt_ref::Real, Pt_ref::Real) =
     mdot * sqrt(Tt_in / Tt_ref) / (Pt_in / Pt_ref)
 
-corrected_speed(omega::Real, Tt_in::Real, map::PerformanceMap) =
+corrected_speed(omega::Real, Tt_in::Real, map::AbstractPerformanceMap) =
     corrected_speed(omega, Tt_in, map.Tt_ref)
 
-corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, map::PerformanceMap) =
+corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, map::AbstractPerformanceMap) =
     corrected_flow(mdot, Tt_in, Pt_in, map.Tt_ref, map.Pt_ref)
 
-function _cell_index_and_fraction(grid::Vector{Float64}, x::Float64)
-    x_clamped = clamp(x, first(grid), last(grid))
-    idx_hi = searchsortedfirst(grid, x_clamped)
-    if idx_hi <= 1
-        return 1, 0.0
-    elseif idx_hi > length(grid)
-        return length(grid) - 1, 1.0
+@inline _map_primal_value(x::Real) = hasfield(typeof(x), :value) ? getfield(x, :value) : x
+
+function _cell_index_and_fraction(grid::AbstractVector{<:Real}, x::Real)
+    x_primal = _map_primal_value(x)
+    if x_primal <= first(grid)
+        return 1, zero(x)
+    elseif x_primal >= last(grid)
+        return length(grid) - 1, one(x)
     end
+    idx_hi = searchsortedfirst(grid, x_primal)
     idx_lo = idx_hi - 1
     x0 = grid[idx_lo]
     x1 = grid[idx_hi]
-    t = (x_clamped - x0) / (x1 - x0)
+    t = (x - x0) / (x1 - x0)
     return idx_lo, t
 end
 
 function _bilinear(
-    x::Float64,
-    y::Float64,
-    xgrid::Vector{Float64},
-    ygrid::Vector{Float64},
-    table::Matrix{Float64},
+    x::Real,
+    y::Real,
+    xgrid::AbstractVector{<:Real},
+    ygrid::AbstractVector{<:Real},
+    table::AbstractMatrix{<:Real},
 )
     i, tx = _cell_index_and_fraction(xgrid, x)
     j, ty = _cell_index_and_fraction(ygrid, y)
@@ -111,25 +105,27 @@ function _bilinear(
 end
 
 """
-Interpolate pressure ratio and adiabatic efficiency at corrected coordinates.
+Evaluate a turbomachine map at corrected coordinates.
 
-Return fields:
-- `PR`: total-pressure ratio (`Pt_out / Pt_in`).
-- `eta`: adiabatic efficiency (isentropic efficiency in this model).
+Returns named tuple `(PR, eta)` where:
+- `PR` is total-pressure ratio (`Pt_out/Pt_in`)
+- `eta` is adiabatic efficiency
 """
-function map_pr_eta(map::PerformanceMap, omega_corr::Real, mdot_corr::Real)
-    omega_corr_f = Float64(omega_corr)
-    mdot_corr_f = Float64(mdot_corr)
+function performance_map(
+    map::TabulatedPerformanceMap,
+    omega_corr::Real,
+    mdot_corr::Real,
+)
     PR = _bilinear(
-        omega_corr_f,
-        mdot_corr_f,
+        omega_corr,
+        mdot_corr,
         map.omega_corr_grid,
         map.mdot_corr_grid,
         map.pr_table,
     )
     eta = _bilinear(
-        omega_corr_f,
-        mdot_corr_f,
+        omega_corr,
+        mdot_corr,
         map.omega_corr_grid,
         map.mdot_corr_grid,
         map.eta_table,
@@ -138,22 +134,12 @@ function map_pr_eta(map::PerformanceMap, omega_corr::Real, mdot_corr::Real)
 end
 
 """
-Compute corrected coordinates and return `(omega_corr, mdot_corr, PR, eta)` from
-physical shaft speed, mass flow, and local stagnation conditions.
+Evaluate a turbomachine map from physical values and local stagnation state.
 
-Returned `PR` and `eta` follow the same definitions as `map_pr_eta`:
-- `PR = Pt_out / Pt_in`
-- `eta` is adiabatic (isentropic) efficiency.
-
-Parameters:
-- `map`: performance map wrapper.
-- `omega`: physical shaft speed.
-- `mdot`: physical mass flow rate.
-- `Tt_in`: local total (stagnation) temperature at the component inlet station.
-- `Pt_in`: local total (stagnation) pressure at the component inlet station.
+Returns `(omega_corr, mdot_corr, PR, eta)`.
 """
-function map_pr_eta_from_stagnation(
-    map::PerformanceMap,
+function performance_map_from_stagnation(
+    map::AbstractPerformanceMap,
     omega::Real,
     mdot::Real,
     Tt_in::Real,
@@ -161,17 +147,13 @@ function map_pr_eta_from_stagnation(
 )
     omega_corr = corrected_speed(omega, Tt_in, map)
     mdot_corr = corrected_flow(mdot, Tt_in, Pt_in, map)
-    vals = map_pr_eta(map, omega_corr, mdot_corr)
+    vals = performance_map(map, omega_corr, mdot_corr)
     return (omega_corr=omega_corr, mdot_corr=mdot_corr, PR=vals.PR, eta=vals.eta)
 end
 
-"""
-Demo compressor map for testing and examples.
-
-This is synthetic data intended for development/demo use only.
-"""
-function demo_compressor_map()
-    PerformanceMap(
+"""Demo tabulated compressor map for development/testing."""
+function demo_compressor_performance_map()
+    TabulatedPerformanceMap(
         288.15,
         101_325.0,
         [0.6, 0.8, 1.0],
@@ -190,13 +172,11 @@ function demo_compressor_map()
 end
 
 """
-Demo turbine map for testing and examples.
-
-This is synthetic data intended for development/demo use only.
-Pressure-ratio convention here is `Pt_out / Pt_in` (less than 1 for expansion).
+Demo tabulated turbine map for development/testing.
+Pressure-ratio convention is `Pt_out / Pt_in` (< 1 for expansion).
 """
-function demo_turbine_map()
-    PerformanceMap(
+function demo_turbine_performance_map()
+    TabulatedPerformanceMap(
         288.15,
         101_325.0,
         [0.6, 0.8, 1.0],
