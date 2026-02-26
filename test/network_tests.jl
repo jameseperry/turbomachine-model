@@ -2,11 +2,11 @@
     F = TurboMachineModel.Network
     C = TurboMachineModel.Components
     P = TurboMachineModel.Physics.Fluids
-    TM = TurboMachineModel.Physics.Turbomachine
+    TM = TurboMachineModel.Physics.Turbomachine.Compressor
 
     cmb = C.Combustor(0.04, 43e6, NamedTuple())
     shaft = C.InertialShaft(J=0.35, damping=0.01, n_ports=1)
-    pm = TM.TabulatedPerformanceMap(
+    pm = TM.TabulatedCompressorPerformanceMap(
         300.0,
         100_000.0,
         [1.0, 2.0],
@@ -14,7 +14,7 @@
         [2.0 3.0; 4.0 5.0],
         [0.8 0.82; 0.9 0.92],
     )
-    tm = C.Turbomachine(mode=:compressor, performance_map=pm, eta_guess=0.9)
+    tm = C.Turbomachine(mode=:compressor, compressor_performance_map=pm, eta_guess=0.9)
 
     net = F.Network()
     F.add_component!(net, :cmp, tm)

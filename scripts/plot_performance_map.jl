@@ -3,14 +3,14 @@
 using TurboMachineModel
 using Plots
 
-const TM = TurboMachineModel.Physics.Turbomachine
+const TM = TurboMachineModel.Physics.Turbomachine.Compressor
 
 """
-    plot_performance_map(map::TM.TabulatedPerformanceMap; title_prefix="Performance Map")
+    plot_performance_map(map::TM.TabulatedCompressorPerformanceMap; title_prefix="Performance Map")
 
 Create a 2-panel contour plot for `PR` and `eta` over corrected flow/speed.
 """
-function plot_performance_map(map::TM.TabulatedPerformanceMap; title_prefix::String="Performance Map")
+function plot_performance_map(map::TM.TabulatedCompressorPerformanceMap; title_prefix::String="Performance Map")
     p_pr = contour(
         map.mdot_corr_grid,
         map.omega_corr_grid,
@@ -39,17 +39,9 @@ function plot_performance_map(map::TM.TabulatedPerformanceMap; title_prefix::Str
 end
 
 function _main()
-    map_name = length(ARGS) >= 1 ? lowercase(ARGS[1]) : "compressor"
-    output_path = length(ARGS) >= 2 ? ARGS[2] : "performance_map.png"
-
-    map, title_prefix =
-        if map_name == "compressor"
-            TM.demo_compressor_performance_map(), "Demo Compressor Map"
-        elseif map_name == "turbine"
-            TM.demo_turbine_performance_map(), "Demo Turbine Map"
-        else
-            error("Unknown map kind '$map_name'. Use 'compressor' or 'turbine'.")
-        end
+    output_path = length(ARGS) >= 1 ? ARGS[1] : "compressor_performance_map.png"
+    map = TM.demo_compressor_performance_map()
+    title_prefix = "Demo Compressor Map"
 
     fig = plot_performance_map(map; title_prefix=title_prefix)
     savefig(fig, output_path)

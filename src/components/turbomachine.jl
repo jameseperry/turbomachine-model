@@ -3,7 +3,7 @@ Unified compressor/turbine component.
 
 Fields:
 - `mode`: operation mode, `:compressor` or `:turbine`.
-- `performance_map`: referenced compressor/turbine performance map data.
+- `compressor_performance_map`: referenced compressor performance map data.
 - `eta_guess`: nominal isentropic efficiency guess used for initialization.
 - `init`: named-tuple of component-specific initial condition values.
 - `port_list`: component ports.
@@ -12,7 +12,7 @@ Fields:
 """
 struct Turbomachine <: AbstractComponent
     mode::Symbol
-    performance_map::AbstractPerformanceMap
+    compressor_performance_map::AbstractCompressorPerformanceMap
     eta_guess::Float64
     init::NamedTuple
     port_list::Vector{ComponentPort}
@@ -22,7 +22,7 @@ end
 
 function Turbomachine(;
     mode::Symbol,
-    performance_map::AbstractPerformanceMap,
+    compressor_performance_map::AbstractCompressorPerformanceMap,
     eta_guess::Real,
     init::NamedTuple=NamedTuple(),
 )
@@ -131,7 +131,7 @@ function Turbomachine(;
 
     return Turbomachine(
         mode,
-        performance_map,
+        compressor_performance_map,
         eta_f,
         init,
         port_list,

@@ -2,7 +2,7 @@ module Components
 
 import ..Component: AbstractComponent, ports, variables
 using ..Component: ComponentPort, ComponentVariable
-using ..Physics.Turbomachine: AbstractPerformanceMap
+using ..Physics.Turbomachine.Compressor: AbstractCompressorPerformanceMap
 
 include("combustor.jl")
 include("plenum.jl")

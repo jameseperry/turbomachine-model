@@ -1,12 +1,12 @@
 """
-Turbomachine residual equations.
+Compressor residual equations and operating-point solve helpers.
 """
 
 using NonlinearSolve
 
 @inline _primal_value(x::Real) = hasfield(typeof(x), :value) ? getfield(x, :value) : x
 
-function turbomachine_residual_scales(
+function compressor_residual_scales(
     pt_in::Real,
     ht_in::Real,
     pt_out::Real,
@@ -45,15 +45,15 @@ function turbomachine_residual_scales(
 end
 
 """
-Compute turbomachine residuals.
+Compute compressor residuals.
 
 Returns `(R_pout, R_dh_eff, R_P)`:
 - `R_pout = pt_out - PR * pt_in`
 - `R_dh_eff = eta * (ht_out - ht_in) - (h2s - ht_in)`
-- `R_P   = tau * omega - mdot * (ht_out - ht_in)`
+- `R_P = tau * omega - mdot * (ht_out - ht_in)`
 """
-function turbomachine_residuals(
-    performance_map::AbstractPerformanceMap,
+function compressor_residuals(
+    compressor_map::AbstractCompressorPerformanceMap,
     eos::Fluids.AbstractEOS,
     pt_in::Real,
     ht_in::Real,
@@ -64,8 +64,8 @@ function turbomachine_residuals(
     tau::Real,
 )
     Tt_in = Fluids.temperature(eos, pt_in, ht_in)
-    map_vals = performance_map_from_stagnation(
-        performance_map,
+    map_vals = compressor_performance_map_from_stagnation(
+        compressor_map,
         omega,
         mdot,
         Tt_in,
@@ -84,25 +84,10 @@ function turbomachine_residuals(
 end
 
 """
-Compute scaled turbomachine residuals.
-
-Returns `(r_pout, r_dh_eff, r_P)` where:
-- `r_pout = R_pout / p_ref`
-- `r_dh_eff = R_dh_eff / h_ref`
-- `r_P    = R_P / P_ref`
-
-Default scale factors are derived from the local state:
-- `p_ref = max(abs(pt_in), abs(pt_out), 1.0)`
-- `h_ref = max(abs(ht_in), abs(ht_out), 1.0)`
-- `P_ref = max(abs(tau * omega), abs(mdot * (ht_out - ht_in)), 1.0)`
-
-You can override each scale with keyword arguments:
-- `pressure_scale`
-- `enthalpy_scale`
-- `power_scale`
+Compute scaled compressor residuals.
 """
-function turbomachine_residuals_scaled(
-    performance_map::AbstractPerformanceMap,
+function compressor_residuals_scaled(
+    compressor_map::AbstractCompressorPerformanceMap,
     eos::Fluids.AbstractEOS,
     pt_in::Real,
     ht_in::Real,
@@ -115,8 +100,8 @@ function turbomachine_residuals_scaled(
     enthalpy_scale::Union{Nothing,Real}=nothing,
     power_scale::Union{Nothing,Real}=nothing,
 )
-    R_pout, R_dh_eff, R_P = turbomachine_residuals(
-        performance_map,
+    R_pout, R_dh_eff, R_P = compressor_residuals(
+        compressor_map,
         eos,
         pt_in,
         ht_in,
@@ -126,7 +111,7 @@ function turbomachine_residuals_scaled(
         omega,
         tau,
     )
-    scales = turbomachine_residual_scales(
+    scales = compressor_residual_scales(
         pt_in,
         ht_in,
         pt_out,
@@ -146,7 +131,7 @@ function turbomachine_residuals_scaled(
 end
 
 """
-Solve a simple turbomachine operating point with four boundary conditions.
+Solve a simple compressor operating point with four boundary conditions.
 
 Fixed boundary conditions:
 - `pt_in`
@@ -158,16 +143,9 @@ Solved unknowns:
 - `mdot`
 - `ht_out`
 - `tau`
-
-By default this solve uses scaled residuals (`scaled_residuals=true`).
-You can disable scaling or provide explicit residual scales through:
-- `scaled_residuals`
-- `pressure_scale`
-- `enthalpy_scale`
-- `power_scale`
 """
-function solve_turbomachine_operating_point(
-    performance_map::AbstractPerformanceMap,
+function solve_compressor_operating_point(
+    compressor_map::AbstractCompressorPerformanceMap,
     eos::Fluids.AbstractEOS;
     pt_in::Real,
     ht_in::Real,
@@ -184,7 +162,7 @@ function solve_turbomachine_operating_point(
     enthalpy_scale::Union{Nothing,Real}=nothing,
     power_scale::Union{Nothing,Real}=nothing,
 )
-    scale_overrides = turbomachine_residual_scales(
+    scale_overrides = compressor_residual_scales(
         pt_in,
         ht_in,
         pt_out,
@@ -202,8 +180,8 @@ function solve_turbomachine_operating_point(
         ht_out = u[2]
         tau = u[3]
         if scaled_residuals
-            r_pout, r_dh_eff, r_P = turbomachine_residuals_scaled(
-                performance_map,
+            r_pout, r_dh_eff, r_P = compressor_residuals_scaled(
+                compressor_map,
                 eos,
                 pt_in,
                 ht_in,
@@ -220,8 +198,8 @@ function solve_turbomachine_operating_point(
             R[2] = r_dh_eff
             R[3] = r_P
         else
-            R_pout, R_dh_eff, R_P = turbomachine_residuals(
-                performance_map,
+            R_pout, R_dh_eff, R_P = compressor_residuals(
+                compressor_map,
                 eos,
                 pt_in,
                 ht_in,
@@ -252,8 +230,8 @@ function solve_turbomachine_operating_point(
     ht_out = sol.u[2]
     tau = sol.u[3]
 
-    residuals = turbomachine_residuals(
-        performance_map,
+    residuals = compressor_residuals(
+        compressor_map,
         eos,
         pt_in,
         ht_in,
@@ -265,8 +243,8 @@ function solve_turbomachine_operating_point(
     )
 
     Tt_in = Fluids.temperature(eos, pt_in, ht_in)
-    map_vals = performance_map_from_stagnation(
-        performance_map,
+    map_vals = compressor_performance_map_from_stagnation(
+        compressor_map,
         omega,
         mdot,
         Tt_in,

@@ -1,7 +1,8 @@
 @testset "Physics" begin
     P = TurboMachineModel.Physics.Fluids
     TP = TurboMachineModel.Physics
-    TM = TP.Turbomachine
+    TM = TP.Turbomachine.Compressor
+    TT = TP.Turbomachine.Turbine
 
     Tt = 300.0
     Pt = 200_000.0
@@ -20,7 +21,7 @@
     @test_throws ErrorException P.velocity_from_massflow(1.0, 0.0, 0.5)
     @test_throws ErrorException P.velocity_from_massflow(1.0, 1.0, 0.0)
 
-    pm = TM.TabulatedPerformanceMap(
+    pm = TM.TabulatedCompressorPerformanceMap(
         300.0,
         100_000.0,
         [1.0, 2.0],
@@ -29,26 +30,23 @@
         [0.8 0.82; 0.9 0.92],
     )
 
-    vals = TM.performance_map(pm, 1.5, 15.0)
+    vals = TM.compressor_performance_map(pm, 1.5, 15.0)
     @test isapprox(vals.PR, 3.5; rtol=1e-12)
     @test isapprox(vals.eta, 0.86; rtol=1e-12)
 
-    from_inlet = TM.performance_map_from_stagnation(pm, 10_000.0, 15.0, 300.0, 100_000.0)
+    from_inlet = TM.compressor_performance_map_from_stagnation(pm, 10_000.0, 15.0, 300.0, 100_000.0)
     @test isapprox(from_inlet.omega_corr, 10_000.0; rtol=1e-12)
     @test isapprox(from_inlet.mdot_corr, 15.0; rtol=1e-12)
     @test isapprox(from_inlet.PR, 4.5; rtol=1e-12)
     @test isapprox(from_inlet.eta, 0.91; rtol=1e-12)
 
     cmp_demo = TM.demo_compressor_performance_map()
-    trb_demo = TM.demo_turbine_performance_map()
-    cmp_vals = TM.performance_map(cmp_demo, 0.8, 16.0)
-    trb_vals = TM.performance_map(trb_demo, 0.8, 14.0)
+    cmp_vals = TM.compressor_performance_map(cmp_demo, 0.8, 16.0)
     @test cmp_vals.PR > 1.0
-    @test trb_vals.PR < 1.0
 
     @testset "Turbomachine Residuals" begin
         eos = P.ideal_EOS()[:air]
-        map = TM.TabulatedPerformanceMap(
+        map = TM.TabulatedCompressorPerformanceMap(
             300.0,
             100_000.0,
             [1.0, 2.0],
@@ -65,7 +63,7 @@
         ht_out = ht_in + (h2s - ht_in) / 0.8
         tau = mdot * (ht_out - ht_in) / omega
 
-        R_pout, R_dh_eff, R_P = TM.turbomachine_residuals(
+        R_pout, R_dh_eff, R_P = TM.compressor_residuals(
             map,
             eos,
             pt_in,
@@ -83,7 +81,7 @@
 
     @testset "Turbomachine Scaled Residuals" begin
         eos = P.ideal_EOS()[:air]
-        map = TM.TabulatedPerformanceMap(
+        map = TM.TabulatedCompressorPerformanceMap(
             300.0,
             100_000.0,
             [1.0, 2.0],
@@ -99,7 +97,7 @@
         ht_out = 380_000.0
         tau = 120.0
 
-        R_pout, R_dh_eff, R_P = TM.turbomachine_residuals(
+        R_pout, R_dh_eff, R_P = TM.compressor_residuals(
             map,
             eos,
             pt_in,
@@ -111,7 +109,7 @@
             tau,
         )
 
-        scales = TM.turbomachine_residual_scales(
+        scales = TM.compressor_residual_scales(
             pt_in,
             ht_in,
             pt_out,
@@ -120,7 +118,7 @@
             omega,
             tau,
         )
-        r_pout, r_dh_eff, r_P = TM.turbomachine_residuals_scaled(
+        r_pout, r_dh_eff, r_P = TM.compressor_residuals_scaled(
             map,
             eos,
             pt_in,
@@ -135,7 +133,7 @@
         @test isapprox(r_dh_eff, R_dh_eff / scales.enthalpy_scale; rtol=1e-12)
         @test isapprox(r_P, R_P / scales.power_scale; rtol=1e-12)
 
-        r2_pout, r2_dh_eff, r2_P = TM.turbomachine_residuals_scaled(
+        r2_pout, r2_dh_eff, r2_P = TM.compressor_residuals_scaled(
             map,
             eos,
             pt_in,
@@ -156,7 +154,7 @@
 
     @testset "Turbomachine Operating Point Solve" begin
         eos = P.ideal_EOS()[:air]
-        map = TM.TabulatedPerformanceMap(
+        map = TM.TabulatedCompressorPerformanceMap(
             300.0,
             100_000.0,
             [1.0, 2.0],
@@ -176,7 +174,7 @@
         ht_out_expected = ht_in + (h2s - ht_in) / 0.8
         tau_expected = mdot_expected * (ht_out_expected - ht_in) / omega
 
-        sol = TM.solve_turbomachine_operating_point(
+        sol = TM.solve_compressor_operating_point(
             map,
             eos;
             pt_in=pt_in,
@@ -195,5 +193,79 @@
         @test isapprox(sol.residuals[1], 0.0; atol=1e-9)
         @test isapprox(sol.residuals[2], 0.0; atol=1e-9)
         @test isapprox(sol.residuals[3], 0.0; atol=1e-9)
+    end
+
+    @testset "Turbine APIs" begin
+        eos = P.ideal_EOS()[:air]
+        map = TT.TabulatedTurbinePerformanceMap(
+            300.0,
+            100_000.0,
+            [1.0, 2.0],
+            [2.0, 3.0],
+            [10.0 12.0; 14.0 16.0],
+            [0.85 0.86; 0.87 0.88],
+        )
+
+        vals = TT.turbine_performance_map(map, 1.5, 2.5)
+        @test isapprox(vals.mdot_corr, 13.0; rtol=1e-12)
+        @test isapprox(vals.eta, 0.865; rtol=1e-12)
+
+        from_stag = TT.turbine_performance_map_from_stagnation(map, 1.5, 200_000.0, 100_000.0, 300.0)
+        @test isapprox(from_stag.omega_corr, 1.5; rtol=1e-12)
+        @test isapprox(from_stag.PR_turb, 2.0; rtol=1e-12)
+        @test isapprox(from_stag.mdot_corr, 12.0; rtol=1e-12)
+        @test isapprox(from_stag.mdot, 24.0; rtol=1e-12)
+        @test isapprox(from_stag.eta, 0.86; rtol=1e-12)
+
+        map_const = TT.TabulatedTurbinePerformanceMap(
+            300.0,
+            100_000.0,
+            [1.0, 2.0],
+            [2.0, 3.0],
+            [10.0 10.0; 10.0 10.0],
+            [0.8 0.8; 0.8 0.8],
+        )
+
+        pt_in = 100_000.0
+        ht_in = 300_000.0
+        pt_out = 50_000.0
+        omega = 1.5
+        Tt_in = P.temperature(eos, pt_in, ht_in)
+        map_vals = TT.turbine_performance_map_from_stagnation(map_const, omega, pt_in, pt_out, Tt_in)
+        mdot = map_vals.mdot
+        h2s = P.isentropic_enthalpy(eos, pt_in, ht_in, pt_out)
+        ht_out = ht_in - map_vals.eta * (ht_in - h2s)
+        tau = mdot * (ht_out - ht_in) / omega
+
+        R_mdot_map, R_dh_eff, R_P = TT.turbine_residuals(
+            map_const,
+            eos,
+            pt_in,
+            ht_in,
+            pt_out,
+            ht_out,
+            mdot,
+            omega,
+            tau,
+        )
+        @test isapprox(R_mdot_map, 0.0; atol=1e-8)
+        @test isapprox(R_dh_eff, 0.0; atol=1e-8)
+        @test isapprox(R_P, 0.0; atol=1e-8)
+
+        sol = TT.solve_turbine_operating_point(
+            map_const,
+            eos;
+            pt_in=pt_in,
+            ht_in=ht_in,
+            pt_out=pt_out,
+            omega=omega,
+            mdot_guess=mdot * 1.1,
+            ht_out_guess=ht_out * 0.95,
+            tau_guess=tau * 1.2,
+        )
+        @test sol.converged
+        @test isapprox(sol.mdot, mdot; rtol=1e-8)
+        @test isapprox(sol.ht_out, ht_out; rtol=1e-8)
+        @test isapprox(sol.tau, tau; rtol=1e-8)
     end
 end

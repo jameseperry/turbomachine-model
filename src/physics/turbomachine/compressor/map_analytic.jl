@@ -1,14 +1,14 @@
 """
-Analytic performance map implementation.
+Analytic compressor performance map implementation.
 """
 
 """
-Analytic compressor/turbine performance map on corrected coordinates.
+Analytic compressor performance map on corrected coordinates.
 
 This parametric model returns pressure ratio (`PR`) and adiabatic efficiency (`eta`)
 as functions of corrected speed and corrected mass flow.
 """
-Base.@kwdef struct AnalyticPerformanceMap{T<:Real} <: AbstractPerformanceMap
+Base.@kwdef struct AnalyticCompressorPerformanceMap{T<:Real} <: AbstractCompressorPerformanceMap
     # Surge boundary: mdot_surge(N) = ms0 + ms1*(N-1) + ms2*(N-1)^2
     ms0::T = T(0.55)
     ms1::T = T(0.10)
@@ -71,19 +71,23 @@ end
 @inline _analytic_smooth_saturate(x::T, k::T) where {T<:Real} =
     x - _analytic_softplus(x - one(T), k) + _analytic_softplus(-x, k)
 
-@inline function mdot_surge(map::AnalyticPerformanceMap, omega_corr::Real)
+@inline function mdot_surge(map::AnalyticCompressorPerformanceMap, omega_corr::Real)
     N = omega_corr
     d = N - 1
     return map.ms0 + map.ms1 * d + map.ms2 * d * d
 end
 
-@inline function mdot_choke(map::AnalyticPerformanceMap, omega_corr::Real)
+@inline function mdot_choke(map::AnalyticCompressorPerformanceMap, omega_corr::Real)
     N = omega_corr
     d = N - 1
     return map.mc0 + map.mc1 * d + map.mc2 * d * d
 end
 
-@inline function _normalized_flow_u(map::AnalyticPerformanceMap, omega_corr::Real, mdot_corr::Real)
+@inline function _normalized_flow_u(
+    map::AnalyticCompressorPerformanceMap,
+    omega_corr::Real,
+    mdot_corr::Real,
+)
     ms = mdot_surge(map, omega_corr)
     mc = mdot_choke(map, omega_corr)
     denom = max(mc - ms, eps(promote_type(typeof(ms), typeof(mc), typeof(mdot_corr))))
@@ -96,7 +100,7 @@ end
     return u_eps^(alpha - one(T)) * (one(T) - u_eps)^(beta - one(T))
 end
 
-function _beta_bump_norm(map::AnalyticPerformanceMap{T}) where {T<:Real}
+function _beta_bump_norm(map::AnalyticCompressorPerformanceMap{T}) where {T<:Real}
     alpha = map.alpha
     beta = map.beta
 
@@ -109,39 +113,37 @@ function _beta_bump_norm(map::AnalyticPerformanceMap{T}) where {T<:Real}
     return maximum(_beta_bump_raw(u, alpha, beta) for u in us)
 end
 
-@inline function _pr_shape(map::AnalyticPerformanceMap{T}, u::T) where {T<:Real}
+@inline function _pr_shape(map::AnalyticCompressorPerformanceMap{T}, u::T) where {T<:Real}
     bump = _beta_bump_raw(u, map.alpha, map.beta) / max(_beta_bump_norm(map), eps(T))
     p_surge = one(T) - map.eps_s_pr * exp(-u / map.del_s_pr)
     p_choke = one(T) - map.eps_c_pr * exp(-(one(T) - u) / map.del_c_pr)
     return bump * p_surge * p_choke
 end
 
-@inline function _pr_speed_scale(map::AnalyticPerformanceMap{T}, omega_corr::Real) where {T<:Real}
+@inline function _pr_speed_scale(map::AnalyticCompressorPerformanceMap{T}, omega_corr::Real) where {T<:Real}
     N = T(omega_corr)
     N_pos = max(N, zero(T))
     return map.Pi_max * (N_pos^map.pr_speed_exp)
 end
 
 """
-Evaluate a turbomachine map at corrected coordinates.
+Evaluate a compressor map at corrected coordinates.
 
 Returns named tuple `(PR, eta)` where:
 - `PR` is total-pressure ratio (`Pt_out/Pt_in`)
 - `eta` is adiabatic efficiency
 """
-function performance_map(
-    map::AnalyticPerformanceMap{T},
+function compressor_performance_map(
+    map::AnalyticCompressorPerformanceMap{T},
     omega_corr::Real,
     mdot_corr::Real,
 ) where {T<:Real}
     N = T(omega_corr)
     u = T(_normalized_flow_u(map, omega_corr, mdot_corr))
 
-    # Pressure ratio
     Pi = _pr_speed_scale(map, omega_corr)
     PR = one(T) + Pi * _pr_shape(map, u)
 
-    # Efficiency
     eta_peak = map.eta_max - map.eta_speed_quad * (N - one(T))^2
     u_star = map.u0 + map.u1 * (N - one(T))
     A = map.A0 * (one(T) + map.A_speed * (N - one(T))^2)
@@ -153,4 +155,3 @@ function performance_map(
 
     return (PR=PR, eta=eta)
 end
-
