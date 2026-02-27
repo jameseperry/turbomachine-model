@@ -289,6 +289,56 @@
     end
 
     @testset "Map IO" begin
+        analytic_map = TM.AnalyticCompressorPerformanceMap{Float64}(
+            Pi_max=1.75,
+            pr_speed_exp=2.25,
+            eta_max=0.90,
+            Tt_ref=300.0,
+            Pt_ref=95_000.0,
+        )
+        analytic_map_path = tempname() * ".toml"
+        TM.write_toml(analytic_map, analytic_map_path)
+        analytic_map_loaded = TM.read_toml(TM.AnalyticCompressorPerformanceMap, analytic_map_path)
+        for field in fieldnames(TM.AnalyticCompressorPerformanceMap{Float64})
+            @test isapprox(getfield(analytic_map_loaded, field), getfield(analytic_map, field); rtol=1e-12)
+        end
+
+        spec = TM.CompressorSpec(
+            pr_design=4.0,
+            eta_design=0.86,
+            flow_range=0.45,
+            surge_margin=0.62,
+            choke_sharpness=0.35,
+            speed_sensitivity=0.70,
+        )
+        spec_path = tempname() * ".toml"
+        TM.write_toml(spec, spec_path)
+        spec_loaded = TM.read_toml(TM.CompressorSpec, spec_path)
+        for field in fieldnames(TM.CompressorSpec{Float64})
+            @test isapprox(getfield(spec_loaded, field), getfield(spec, field); rtol=1e-12)
+        end
+
+        design = TM.CompressorDesign(
+            kind=:centrifugal,
+            stage_count=1,
+            stage_loading=0.65,
+            tip_mach_design=0.75,
+            diffusion_aggressiveness=0.45,
+            clearance_fraction=0.15,
+            diffuser_quality=0.72,
+            variable_geometry=0.10,
+            reynolds_quality=0.88,
+        )
+        design_path = tempname() * ".toml"
+        TM.write_toml(design, design_path)
+        design_loaded = TM.read_toml(TM.CompressorDesign, design_path)
+        @test design_loaded.kind == design.kind
+        @test design_loaded.stage_count == design.stage_count
+        for field in fieldnames(TM.CompressorDesign{Float64})
+            field in (:kind, :stage_count) && continue
+            @test isapprox(getfield(design_loaded, field), getfield(design, field); rtol=1e-12)
+        end
+
         table_map_toml_path = tempname() * ".toml"
         U.write_toml(pm.pr_map, table_map_toml_path)
         table_map_toml_loaded = U.read_toml(U.AbstractTableMap, table_map_toml_path)

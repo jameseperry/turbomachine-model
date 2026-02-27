@@ -2,6 +2,9 @@
 Behavioral compressor envelope for compiling to `AnalyticCompressorPerformanceMap`.
 """
 
+using TOML
+import ....Utility: write_toml, read_toml
+
 Base.@kwdef struct CompressorSpec{T<:Real}
     pr_design::T = 3.0
     eta_design::T = 0.88
@@ -10,6 +13,8 @@ Base.@kwdef struct CompressorSpec{T<:Real}
     choke_sharpness::T = 0.40
     speed_sensitivity::T = 0.50
 end
+
+const _COMPRESSOR_SPEC_FIELDS = fieldnames(CompressorSpec{Float64})
 
 @inline _clamp01(x::T) where {T<:Real} = clamp(x, zero(T), one(T))
 @inline _lerp(a::T, b::T, t::T) where {T<:Real} = a + (b - a) * t
@@ -105,4 +110,49 @@ function compile_compressor_map(spec::CompressorSpec{T}; kind::Symbol=:axial) wh
         eta_min=T(0.50), eta_max_clip=T(0.92),
         Tt_ref=T(288.15), Pt_ref=T(101_325.0),
     )
+end
+
+function write_toml(
+    spec::CompressorSpec,
+    path::AbstractString;
+    group::AbstractString="compressor_spec",
+)
+    data = Dict{String,Any}()
+    node = _find_or_create_group!(data, group)
+    node["format"] = "compressor_spec"
+    node["format_version"] = 1
+
+    for field in _COMPRESSOR_SPEC_FIELDS
+        node[String(field)] = Float64(getfield(spec, field))
+    end
+
+    open(path, "w") do io
+        TOML.print(io, data; sorted=true)
+    end
+    return path
+end
+
+function read_toml(
+    ::Type{CompressorSpec{T}},
+    path::AbstractString;
+    group::AbstractString="compressor_spec",
+) where {T<:Real}
+    data = TOML.parsefile(path)
+    node = _find_group(data, group)
+
+    for field in _COMPRESSOR_SPEC_FIELDS
+        key = String(field)
+        haskey(node, key) || error("missing TOML key $(key)")
+    end
+
+    kwargs = (; (field => T(node[String(field)]) for field in _COMPRESSOR_SPEC_FIELDS)...)
+    return CompressorSpec{T}(; kwargs...)
+end
+
+function read_toml(
+    ::Type{CompressorSpec},
+    path::AbstractString;
+    group::AbstractString="compressor_spec",
+)
+    return read_toml(CompressorSpec{Float64}, path; group=group)
 end

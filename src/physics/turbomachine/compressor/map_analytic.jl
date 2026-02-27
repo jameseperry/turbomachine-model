@@ -2,6 +2,9 @@
 Analytic compressor performance map implementation.
 """
 
+using TOML
+import ....Utility: write_toml, read_toml
+
 """
 Analytic compressor performance map on corrected coordinates.
 
@@ -56,6 +59,8 @@ Base.@kwdef struct AnalyticCompressorPerformanceMap{T<:Real} <: AbstractCompress
     Tt_ref::T = T(288.15)
     Pt_ref::T = T(101_325.0)
 end
+
+const _ANALYTIC_MAP_FIELDS = fieldnames(AnalyticCompressorPerformanceMap{Float64})
 
 @inline function _analytic_softplus(x::T, k::T) where {T<:Real}
     z = k * x
@@ -154,4 +159,49 @@ function compressor_performance_map(
     eta = clamp(eta, map.eta_min, map.eta_max_clip)
 
     return (PR=PR, eta=eta)
+end
+
+function write_toml(
+    map::AnalyticCompressorPerformanceMap,
+    path::AbstractString;
+    group::AbstractString="compressor_analytic_map",
+)
+    data = Dict{String,Any}()
+    node = _find_or_create_group!(data, group)
+    node["format"] = "compressor_analytic_performance_map"
+    node["format_version"] = 1
+
+    for field in _ANALYTIC_MAP_FIELDS
+        node[String(field)] = Float64(getfield(map, field))
+    end
+
+    open(path, "w") do io
+        TOML.print(io, data; sorted=true)
+    end
+    return path
+end
+
+function read_toml(
+    ::Type{AnalyticCompressorPerformanceMap{T}},
+    path::AbstractString;
+    group::AbstractString="compressor_analytic_map",
+) where {T<:Real}
+    data = TOML.parsefile(path)
+    node = _find_group(data, group)
+
+    for field in _ANALYTIC_MAP_FIELDS
+        key = String(field)
+        haskey(node, key) || error("missing TOML key $(key)")
+    end
+
+    kwargs = (; (field => T(node[String(field)]) for field in _ANALYTIC_MAP_FIELDS)...)
+    return AnalyticCompressorPerformanceMap{T}(; kwargs...)
+end
+
+function read_toml(
+    ::Type{AnalyticCompressorPerformanceMap},
+    path::AbstractString;
+    group::AbstractString="compressor_analytic_map",
+)
+    return read_toml(AnalyticCompressorPerformanceMap{Float64}, path; group=group)
 end

@@ -2,6 +2,9 @@
 Physical-ish compressor design knobs for compiling to `CompressorSpec`.
 """
 
+using TOML
+import ....Utility: write_toml, read_toml
+
 Base.@kwdef struct CompressorDesign{T<:Real}
     kind::Symbol = :axial
     stage_count::Int = 8
@@ -13,6 +16,16 @@ Base.@kwdef struct CompressorDesign{T<:Real}
     variable_geometry::T = 0.30
     reynolds_quality::T = 0.80
 end
+
+const _COMPRESSOR_DESIGN_REAL_FIELDS = (
+    :stage_loading,
+    :tip_mach_design,
+    :diffusion_aggressiveness,
+    :clearance_fraction,
+    :diffuser_quality,
+    :variable_geometry,
+    :reynolds_quality,
+)
 
 """
     compile_compressor_spec(design::CompressorDesign) -> CompressorSpec
@@ -96,4 +109,58 @@ Compile a design directly to an analytic compressor performance map.
 function compile_compressor_map(design::CompressorDesign{T}) where {T<:Real}
     spec = compile_compressor_spec(design)
     return compile_compressor_map(spec; kind=design.kind)
+end
+
+function write_toml(
+    design::CompressorDesign,
+    path::AbstractString;
+    group::AbstractString="compressor_design",
+)
+    data = Dict{String,Any}()
+    node = _find_or_create_group!(data, group)
+    node["format"] = "compressor_design"
+    node["format_version"] = 1
+    node["kind"] = String(design.kind)
+    node["stage_count"] = design.stage_count
+    for field in _COMPRESSOR_DESIGN_REAL_FIELDS
+        node[String(field)] = Float64(getfield(design, field))
+    end
+
+    open(path, "w") do io
+        TOML.print(io, data; sorted=true)
+    end
+    return path
+end
+
+function read_toml(
+    ::Type{CompressorDesign{T}},
+    path::AbstractString;
+    group::AbstractString="compressor_design",
+) where {T<:Real}
+    data = TOML.parsefile(path)
+    node = _find_group(data, group)
+
+    haskey(node, "kind") || error("missing TOML key kind")
+    haskey(node, "stage_count") || error("missing TOML key stage_count")
+    for field in _COMPRESSOR_DESIGN_REAL_FIELDS
+        key = String(field)
+        haskey(node, key) || error("missing TOML key $(key)")
+    end
+
+    kind = Symbol(String(node["kind"]))
+    stage_count = Int(node["stage_count"])
+    kwargs = (; (field => T(node[String(field)]) for field in _COMPRESSOR_DESIGN_REAL_FIELDS)...)
+    return CompressorDesign{T}(;
+        kind=kind,
+        stage_count=stage_count,
+        kwargs...,
+    )
+end
+
+function read_toml(
+    ::Type{CompressorDesign},
+    path::AbstractString;
+    group::AbstractString="compressor_design",
+)
+    return read_toml(CompressorDesign{Float64}, path; group=group)
 end
