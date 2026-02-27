@@ -1,10 +1,37 @@
 #!/usr/bin/env julia
 
+using ArgParse
 using TurboMachineModel
 using Plots
 
 const Fluids = TurboMachineModel.Physics.Fluids
 const TT = TurboMachineModel.Physics.Turbomachine.Turbine
+const U = TurboMachineModel.Utility
+
+function _infer_format(path::AbstractString)
+    ext = lowercase(splitext(path)[2])
+    if ext == ".toml"
+        return :toml
+    elseif ext == ".h5" || ext == ".hdf5"
+        return :hdf5
+    end
+    error("unsupported map extension $(ext) for path $(path); expected .toml/.h5/.hdf5")
+end
+
+function _load_turbine_map(path::AbstractString; group::AbstractString="turbine_map")
+    format = _infer_format(path)
+    if format == :toml
+        return TT.read_toml(TT.TabulatedTurbinePerformanceMap, path; group=group)
+    end
+    return TT.read_hdf5(TT.TabulatedTurbinePerformanceMap, path; group=group)
+end
+
+function _parsed_opt(parsed::Dict{String,Any}, primary::String, fallback::String)
+    if haskey(parsed, primary)
+        return parsed[primary]
+    end
+    return get(parsed, fallback, nothing)
+end
 
 function _state_from_pt_out(
     map::TT.TabulatedTurbinePerformanceMap,
@@ -42,8 +69,8 @@ function _solve_pt_out_at_speed(
         return tau_load * omega - state.power
     end
 
-    pr_min = first(map.pr_turb_grid)
-    pr_max = last(map.pr_turb_grid)
+    pr_min = first(U.table_ygrid(map.mdot_corr_map))
+    pr_max = last(U.table_ygrid(map.mdot_corr_map))
     pt_out_min = pt_in / pr_max
     pt_out_max = pt_in / pr_min
     tau_ref = max(abs(tau_load * omega), 1.0)
@@ -116,7 +143,8 @@ function _solve_pt_out_at_speed(
     return (converged=false, pt_out=best_pt, reason="bisection max iterations")
 end
 
-function sweep_turbine_operating_points(;
+function sweep_turbine_operating_points(
+    map::TT.TabulatedTurbinePerformanceMap;
     omega_min::Float64=0.6,
     omega_max::Float64=1.0,
     n_points::Int=25,
@@ -124,7 +152,6 @@ function sweep_turbine_operating_points(;
     pt_in::Float64=101_325.0,
     Tt_in::Float64=288.15,
 )
-    map = TT.demo_turbine_performance_map()
     eos = Fluids.ideal_EOS()[:air]
     ht_in = Fluids.enthalpy_from_temperature(eos, Tt_in)
 
@@ -134,7 +161,7 @@ function sweep_turbine_operating_points(;
     powers = fill(NaN, n_points)
     converged = fill(false, n_points)
 
-    pr_mid = 0.5 * (first(map.pr_turb_grid) + last(map.pr_turb_grid))
+    pr_mid = 0.5 * (first(U.table_ygrid(map.mdot_corr_map)) + last(U.table_ygrid(map.mdot_corr_map)))
     pt_out_guess = pt_in / pr_mid
 
     for (i, omega) in enumerate(omegas)
@@ -155,11 +182,25 @@ function sweep_turbine_operating_points(;
     return (omegas=omegas, prs=prs, mdots=mdots, powers=powers, converged=converged)
 end
 
-function plot_turbine_operating_sweep(;
+function plot_turbine_operating_sweep(
+    map::TT.TabulatedTurbinePerformanceMap;
     output_path::String="turbine_operating_sweep.png",
     tau_load::Float64=-5.0e5,
+    omega_min::Float64=0.6,
+    omega_max::Float64=1.0,
+    n_points::Int=25,
+    pt_in::Float64=101_325.0,
+    Tt_in::Float64=288.15,
 )
-    data = sweep_turbine_operating_points(tau_load=tau_load)
+    data = sweep_turbine_operating_points(
+        map;
+        tau_load=tau_load,
+        omega_min=omega_min,
+        omega_max=omega_max,
+        n_points=n_points,
+        pt_in=pt_in,
+        Tt_in=Tt_in,
+    )
 
     p1 = plot(
         data.omegas,
@@ -202,9 +243,68 @@ function plot_turbine_operating_sweep(;
 end
 
 function _main()
-    output_path = length(ARGS) >= 1 ? ARGS[1] : "turbine_operating_sweep.png"
-    tau_load = length(ARGS) >= 2 ? parse(Float64, ARGS[2]) : -5.0e5
-    plot_turbine_operating_sweep(output_path=output_path, tau_load=tau_load)
+    settings = ArgParseSettings(
+        prog="plot_turbine_operating_sweep.jl",
+        description="Solve and plot turbine operating sweep from a tabulated performance map file.",
+    )
+    @add_arg_table! settings begin
+        "map_path"
+            help = "input turbine performance map (.toml/.h5/.hdf5)"
+            required = true
+        "--output"
+            help = "output plot path"
+            arg_type = String
+            default = "turbine_operating_sweep.png"
+        "--map-group"
+            help = "input map group/table"
+            arg_type = String
+            default = "turbine_map"
+        "--tau-load"
+            help = "load torque (N*m), typically negative for power extraction"
+            arg_type = Float64
+            default = -5.0e5
+        "--omega-min"
+            help = "minimum normalized shaft speed"
+            arg_type = Float64
+            default = 0.6
+        "--omega-max"
+            help = "maximum normalized shaft speed"
+            arg_type = Float64
+            default = 1.0
+        "--n-points"
+            help = "number of sweep points"
+            arg_type = Int
+            default = 25
+        "--pt-in"
+            help = "inlet total pressure (Pa)"
+            arg_type = Float64
+            default = 101_325.0
+        "--tt-in"
+            help = "inlet total temperature (K)"
+            arg_type = Float64
+            default = 288.15
+    end
+
+    parsed = parse_args(ARGS, settings)
+    map_group = something(_parsed_opt(parsed, "map_group", "map-group"), "turbine_map")
+    output = something(_parsed_opt(parsed, "output", "output"), "turbine_operating_sweep.png")
+    tau_load = something(_parsed_opt(parsed, "tau_load", "tau-load"), -5.0e5)
+    omega_min = something(_parsed_opt(parsed, "omega_min", "omega-min"), 0.6)
+    omega_max = something(_parsed_opt(parsed, "omega_max", "omega-max"), 1.0)
+    n_points = something(_parsed_opt(parsed, "n_points", "n-points"), 25)
+    pt_in = something(_parsed_opt(parsed, "pt_in", "pt-in"), 101_325.0)
+    tt_in = something(_parsed_opt(parsed, "tt_in", "tt-in"), 288.15)
+    map = _load_turbine_map(parsed["map_path"]; group=map_group)
+    plot_turbine_operating_sweep(
+        map;
+        output_path=output,
+        tau_load=tau_load,
+        omega_min=omega_min,
+        omega_max=omega_max,
+        n_points=n_points,
+        pt_in=pt_in,
+        Tt_in=tt_in,
+    )
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

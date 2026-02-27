@@ -3,6 +3,7 @@
     TP = TurboMachineModel.Physics
     TM = TP.Turbomachine.Compressor
     TT = TP.Turbomachine.Turbine
+    U = TurboMachineModel.Utility
 
     Tt = 300.0
     Pt = 200_000.0
@@ -27,12 +28,25 @@
         [1.0, 2.0],
         [10.0, 20.0],
         [2.0 3.0; 4.0 5.0],
-        [0.8 0.82; 0.9 0.92],
+        [0.8 0.82; 0.9 0.92];
+        interpolation=:bilinear,
     )
 
     vals = TM.compressor_performance_map(pm, 1.5, 15.0)
     @test isapprox(vals.PR, 3.5; rtol=1e-12)
     @test isapprox(vals.eta, 0.86; rtol=1e-12)
+
+    pm_bicubic = TM.TabulatedCompressorPerformanceMap(
+        300.0,
+        100_000.0,
+        [1.0, 2.0, 3.0],
+        [10.0, 20.0, 30.0],
+        [4.0 7.0 10.0; 6.0 9.0 12.0; 8.0 11.0 14.0],
+        [0.70 0.80 0.90; 0.72 0.82 0.92; 0.74 0.84 0.94];
+        interpolation=:bicubic,
+    )
+    vals_bicubic = TM.compressor_performance_map(pm_bicubic, 2.5, 15.0)
+    @test isapprox(vals_bicubic.PR, 8.5; rtol=1e-12)
 
     from_inlet = TM.compressor_performance_map_from_stagnation(pm, 10_000.0, 15.0, 300.0, 100_000.0)
     @test isapprox(from_inlet.omega_corr, 10_000.0; rtol=1e-12)
@@ -52,7 +66,8 @@
             [1.0, 2.0],
             [10.0, 20.0],
             [2.0 2.0; 2.0 2.0],
-            [0.8 0.8; 0.8 0.8],
+            [0.8 0.8; 0.8 0.8];
+            interpolation=:bilinear,
         )
         pt_in = 100_000.0
         ht_in = 300_000.0
@@ -87,7 +102,8 @@
             [1.0, 2.0],
             [10.0, 20.0],
             [2.0 2.0; 2.0 2.0],
-            [0.8 0.8; 0.8 0.8],
+            [0.8 0.8; 0.8 0.8];
+            interpolation=:bilinear,
         )
         pt_in = 100_000.0
         ht_in = 300_000.0
@@ -160,7 +176,8 @@
             [1.0, 2.0],
             [10.0, 20.0],
             [1.8 2.2; 1.8 2.2],
-            [0.8 0.8; 0.8 0.8],
+            [0.8 0.8; 0.8 0.8];
+            interpolation=:bilinear,
         )
 
         pt_in = 100_000.0
@@ -203,7 +220,8 @@
             [1.0, 2.0],
             [2.0, 3.0],
             [10.0 12.0; 14.0 16.0],
-            [0.85 0.86; 0.87 0.88],
+            [0.85 0.86; 0.87 0.88];
+            interpolation=:bilinear,
         )
 
         vals = TT.turbine_performance_map(map, 1.5, 2.5)
@@ -223,7 +241,8 @@
             [1.0, 2.0],
             [2.0, 3.0],
             [10.0 10.0; 10.0 10.0],
-            [0.8 0.8; 0.8 0.8],
+            [0.8 0.8; 0.8 0.8];
+            interpolation=:bilinear,
         )
 
         pt_in = 100_000.0
@@ -267,5 +286,62 @@
         @test isapprox(sol.mdot, mdot; rtol=1e-8)
         @test isapprox(sol.ht_out, ht_out; rtol=1e-8)
         @test isapprox(sol.tau, tau; rtol=1e-8)
+    end
+
+    @testset "Map IO" begin
+        table_map_path = tempname() * ".h5"
+        U.write_hdf5(pm.pr_map, table_map_path)
+        table_map_loaded = U.read_hdf5(U.AbstractTableMap, table_map_path)
+        @test U.table_interpolation(table_map_loaded) == :bilinear
+        @test U.table_xgrid(table_map_loaded) == U.table_xgrid(pm.pr_map)
+        @test U.table_ygrid(table_map_loaded) == U.table_ygrid(pm.pr_map)
+        @test U.table_values(table_map_loaded) == U.table_values(pm.pr_map)
+
+        table_map_toml_path = tempname() * ".toml"
+        U.write_toml(pm.pr_map, table_map_toml_path)
+        table_map_toml_loaded = U.read_toml(U.AbstractTableMap, table_map_toml_path)
+        @test U.table_interpolation(table_map_toml_loaded) == :bilinear
+        @test U.table_xgrid(table_map_toml_loaded) == U.table_xgrid(pm.pr_map)
+        @test U.table_ygrid(table_map_toml_loaded) == U.table_ygrid(pm.pr_map)
+        @test U.table_values(table_map_toml_loaded) == U.table_values(pm.pr_map)
+
+        compressor_map_path = tempname() * ".h5"
+        TM.write_hdf5(pm_bicubic, compressor_map_path)
+        pm_loaded = TM.read_hdf5(TM.TabulatedCompressorPerformanceMap, compressor_map_path)
+        vals_ref = TM.compressor_performance_map(pm_bicubic, 2.5, 15.0)
+        vals_loaded = TM.compressor_performance_map(pm_loaded, 2.5, 15.0)
+        @test isapprox(vals_loaded.PR, vals_ref.PR; rtol=1e-12)
+        @test isapprox(vals_loaded.eta, vals_ref.eta; rtol=1e-12)
+
+        compressor_map_toml_path = tempname() * ".toml"
+        TM.write_toml(pm_bicubic, compressor_map_toml_path)
+        pm_toml_loaded = TM.read_toml(TM.TabulatedCompressorPerformanceMap, compressor_map_toml_path)
+        vals_toml_loaded = TM.compressor_performance_map(pm_toml_loaded, 2.5, 15.0)
+        @test isapprox(vals_toml_loaded.PR, vals_ref.PR; rtol=1e-12)
+        @test isapprox(vals_toml_loaded.eta, vals_ref.eta; rtol=1e-12)
+
+        turbine_map = TT.TabulatedTurbinePerformanceMap(
+            300.0,
+            100_000.0,
+            [1.0, 2.0],
+            [2.0, 3.0],
+            [10.0 10.0; 10.0 10.0],
+            [0.8 0.8; 0.8 0.8];
+            interpolation=:bilinear,
+        )
+        turbine_map_path = tempname() * ".h5"
+        TT.write_hdf5(turbine_map, turbine_map_path)
+        map_const_loaded = TT.read_hdf5(TT.TabulatedTurbinePerformanceMap, turbine_map_path)
+        vals_t_ref = TT.turbine_performance_map(turbine_map, 1.5, 2.5)
+        vals_t_loaded = TT.turbine_performance_map(map_const_loaded, 1.5, 2.5)
+        @test isapprox(vals_t_loaded.mdot_corr, vals_t_ref.mdot_corr; rtol=1e-12)
+        @test isapprox(vals_t_loaded.eta, vals_t_ref.eta; rtol=1e-12)
+
+        turbine_map_toml_path = tempname() * ".toml"
+        TT.write_toml(turbine_map, turbine_map_toml_path)
+        turbine_map_toml_loaded = TT.read_toml(TT.TabulatedTurbinePerformanceMap, turbine_map_toml_path)
+        vals_t_toml_loaded = TT.turbine_performance_map(turbine_map_toml_loaded, 1.5, 2.5)
+        @test isapprox(vals_t_toml_loaded.mdot_corr, vals_t_ref.mdot_corr; rtol=1e-12)
+        @test isapprox(vals_t_toml_loaded.eta, vals_t_ref.eta; rtol=1e-12)
     end
 end
