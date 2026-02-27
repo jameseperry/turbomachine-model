@@ -7,8 +7,6 @@ using ....Utility: AbstractTableMap, interpolation_map, table_evaluate
 using ....Utility: table_xgrid, table_ygrid, table_values, table_interpolation
 import ....Utility: write_toml, read_toml
 
-abstract type AbstractTurbinePerformanceMap end
-
 """
 Tabulated turbine performance map on corrected coordinates.
 
@@ -74,6 +72,10 @@ pr_turb_grid(map::TabulatedTurbinePerformanceMap) = table_ygrid(map.mdot_corr_ma
 mdot_corr_table(map::TabulatedTurbinePerformanceMap) = table_values(map.mdot_corr_map)
 eta_table(map::TabulatedTurbinePerformanceMap) = table_values(map.eta_map)
 interpolation_kind(map::TabulatedTurbinePerformanceMap) = table_interpolation(map.mdot_corr_map)
+performance_map_domain(map::TabulatedTurbinePerformanceMap) = (
+    omega_corr=(first(omega_corr_grid(map)), last(omega_corr_grid(map))),
+    pr_turb=(first(pr_turb_grid(map)), last(pr_turb_grid(map))),
+)
 
 """Corrected shaft speed from physical speed and local total temperature."""
 corrected_speed(omega::Real, Tt_in::Real, Tt_ref::Real) =

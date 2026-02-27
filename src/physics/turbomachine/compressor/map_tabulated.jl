@@ -7,8 +7,6 @@ using ....Utility: AbstractTableMap, interpolation_map, table_evaluate
 using ....Utility: table_xgrid, table_ygrid, table_values, table_interpolation
 import ....Utility: write_toml, read_toml
 
-abstract type AbstractCompressorPerformanceMap end
-
 """
 Tabulated compressor performance map on corrected coordinates.
 
@@ -74,6 +72,18 @@ mdot_corr_grid(map::TabulatedCompressorPerformanceMap) = table_ygrid(map.pr_map)
 pr_table(map::TabulatedCompressorPerformanceMap) = table_values(map.pr_map)
 eta_table(map::TabulatedCompressorPerformanceMap) = table_values(map.eta_map)
 interpolation_kind(map::TabulatedCompressorPerformanceMap) = table_interpolation(map.pr_map)
+function performance_map_domain(map::TabulatedCompressorPerformanceMap)
+    mdot_lo = first(mdot_corr_grid(map))
+    mdot_hi = last(mdot_corr_grid(map))
+    return (
+        omega_corr=(first(omega_corr_grid(map)), last(omega_corr_grid(map))),
+        mdot_corr=(mdot_lo, mdot_hi),
+        mdot_corr_flow_range=(
+            surge=(omega_corr -> mdot_lo),
+            choke=(omega_corr -> mdot_hi),
+        ),
+    )
+end
 
 """Corrected shaft speed from physical speed and local total temperature."""
 corrected_speed(omega::Real, Tt_in::Real, Tt_ref::Real) =

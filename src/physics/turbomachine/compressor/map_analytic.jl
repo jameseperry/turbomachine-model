@@ -58,6 +58,10 @@ Base.@kwdef struct AnalyticCompressorPerformanceMap{T<:Real} <: AbstractCompress
     # Reference stagnation conditions for corrected normalization
     Tt_ref::T = T(288.15)
     Pt_ref::T = T(101_325.0)
+
+    # Recommended corrected speed domain
+    omega_corr_min::T = T(0.6)
+    omega_corr_max::T = T(1.0)
 end
 
 const _ANALYTIC_MAP_FIELDS = fieldnames(AnalyticCompressorPerformanceMap{Float64})
@@ -161,6 +165,23 @@ function compressor_performance_map(
     return (PR=PR, eta=eta)
 end
 
+function performance_map_domain(map::AnalyticCompressorPerformanceMap)
+    omega_min = min(map.omega_corr_min, map.omega_corr_max)
+    omega_max = max(map.omega_corr_min, map.omega_corr_max)
+    smin = mdot_surge(map, omega_min)
+    smax = mdot_surge(map, omega_max)
+    cmin = mdot_choke(map, omega_min)
+    cmax = mdot_choke(map, omega_max)
+    return (
+        omega_corr=(omega_min, omega_max),
+        mdot_corr=(min(smin, smax), max(cmin, cmax)),
+        mdot_corr_flow_range=(
+            surge=(omega_corr -> mdot_surge(map, omega_corr)),
+            choke=(omega_corr -> mdot_choke(map, omega_corr)),
+        ),
+    )
+end
+
 function write_toml(
     map::AnalyticCompressorPerformanceMap,
     path::AbstractString;
@@ -189,12 +210,11 @@ function read_toml(
     data = TOML.parsefile(path)
     node = _find_group(data, group)
 
-    for field in _ANALYTIC_MAP_FIELDS
-        key = String(field)
-        haskey(node, key) || error("missing TOML key $(key)")
-    end
-
-    kwargs = (; (field => T(node[String(field)]) for field in _ANALYTIC_MAP_FIELDS)...)
+    defaults = AnalyticCompressorPerformanceMap{T}()
+    kwargs = (; (
+        field => (haskey(node, String(field)) ? T(node[String(field)]) : getfield(defaults, field))
+        for field in _ANALYTIC_MAP_FIELDS
+    )...)
     return AnalyticCompressorPerformanceMap{T}(; kwargs...)
 end
 
