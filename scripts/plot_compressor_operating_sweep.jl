@@ -12,18 +12,13 @@ function _infer_format(path::AbstractString)
     ext = lowercase(splitext(path)[2])
     if ext == ".toml"
         return :toml
-    elseif ext == ".h5" || ext == ".hdf5"
-        return :hdf5
     end
-    error("unsupported map extension $(ext) for path $(path); expected .toml/.h5/.hdf5")
+    error("unsupported map extension $(ext) for path $(path); expected .toml")
 end
 
 function _load_compressor_map(path::AbstractString; group::AbstractString="compressor_map")
-    format = _infer_format(path)
-    if format == :toml
-        return TM.read_toml(TM.TabulatedCompressorPerformanceMap, path; group=group)
-    end
-    return TM.read_hdf5(TM.TabulatedCompressorPerformanceMap, path; group=group)
+    _infer_format(path)
+    return TM.read_toml(TM.TabulatedCompressorPerformanceMap, path; group=group)
 end
 
 function _parsed_opt(parsed::Dict{String,Any}, primary::String, fallback::String)
@@ -304,7 +299,7 @@ function _main()
     )
     @add_arg_table! settings begin
         "map_path"
-            help = "input compressor performance map (.toml/.h5/.hdf5)"
+            help = "input compressor performance map (.toml)"
             required = true
         "--output"
             help = "output plot path"

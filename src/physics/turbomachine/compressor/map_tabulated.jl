@@ -2,11 +2,10 @@
 Tabulated compressor performance map implementation.
 """
 
-using HDF5
 using TOML
 using ....Utility: AbstractTableMap, interpolation_map, table_evaluate
 using ....Utility: table_xgrid, table_ygrid, table_values, table_interpolation
-import ....Utility: write_hdf5, read_hdf5, write_toml, read_toml
+import ....Utility: write_toml, read_toml
 
 abstract type AbstractCompressorPerformanceMap end
 
@@ -123,57 +122,6 @@ function compressor_performance_map_from_stagnation(
     mdot_corr = corrected_flow(mdot, Tt_in, Pt_in, map)
     vals = compressor_performance_map(map, omega_corr, mdot_corr)
     return (omega_corr=omega_corr, mdot_corr=mdot_corr, PR=vals.PR, eta=vals.eta)
-end
-
-function write_hdf5(
-    parent::Union{HDF5.File, HDF5.Group},
-    name::AbstractString,
-    map::TabulatedCompressorPerformanceMap,
-)
-    haskey(parent, name) && error("HDF5 object $(name) already exists")
-    group = create_group(parent, name)
-    attrs(group)["Tt_ref"] = map.Tt_ref
-    attrs(group)["Pt_ref"] = map.Pt_ref
-    write_hdf5(group, "pr_map", map.pr_map)
-    write_hdf5(group, "eta_map", map.eta_map)
-    return nothing
-end
-
-function read_hdf5(
-    ::Type{TabulatedCompressorPerformanceMap},
-    parent::Union{HDF5.File, HDF5.Group},
-    name::AbstractString,
-)
-    haskey(parent, name) || error("missing HDF5 object $(name)")
-    group = parent[name]
-    haskey(attrs(group), "Tt_ref") || error("missing attribute Tt_ref")
-    haskey(attrs(group), "Pt_ref") || error("missing attribute Pt_ref")
-    Tt_ref = Float64(attrs(group)["Tt_ref"])
-    Pt_ref = Float64(attrs(group)["Pt_ref"])
-    pr_map = read_hdf5(AbstractTableMap, group, "pr_map")
-    eta_map = read_hdf5(AbstractTableMap, group, "eta_map")
-    return TabulatedCompressorPerformanceMap(Tt_ref, Pt_ref, pr_map, eta_map)
-end
-
-function write_hdf5(
-    map::TabulatedCompressorPerformanceMap,
-    path::AbstractString;
-    group::AbstractString="compressor_map",
-)
-    h5open(path, "w") do file
-        write_hdf5(file, group, map)
-    end
-    return path
-end
-
-function read_hdf5(
-    ::Type{TabulatedCompressorPerformanceMap},
-    path::AbstractString;
-    group::AbstractString="compressor_map",
-)
-    return h5open(path, "r") do file
-        read_hdf5(TabulatedCompressorPerformanceMap, file, group)
-    end
 end
 
 function _table_to_rows(table::AbstractMatrix{<:Real})

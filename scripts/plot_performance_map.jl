@@ -13,10 +13,8 @@ function _infer_format(path::AbstractString)
     ext = lowercase(splitext(path)[2])
     if ext == ".toml"
         return :toml
-    elseif ext == ".h5" || ext == ".hdf5"
-        return :hdf5
     end
-    error("unsupported map extension $(ext) for path $(path); expected .toml/.h5/.hdf5")
+    error("unsupported map extension $(ext) for path $(path); expected .toml")
 end
 
 _default_group(::Val{:compressor}) = "compressor_map"
@@ -24,26 +22,18 @@ _default_group(::Val{:turbine}) = "turbine_map"
 
 function _read_map(
     ::Val{:compressor},
-    format::Symbol,
     path::AbstractString,
     group::AbstractString,
 )
-    if format == :toml
-        return Compressor.read_toml(Compressor.TabulatedCompressorPerformanceMap, path; group=group)
-    end
-    return Compressor.read_hdf5(Compressor.TabulatedCompressorPerformanceMap, path; group=group)
+    return Compressor.read_toml(Compressor.TabulatedCompressorPerformanceMap, path; group=group)
 end
 
 function _read_map(
     ::Val{:turbine},
-    format::Symbol,
     path::AbstractString,
     group::AbstractString,
 )
-    if format == :toml
-        return Turbine.read_toml(Turbine.TabulatedTurbinePerformanceMap, path; group=group)
-    end
-    return Turbine.read_hdf5(Turbine.TabulatedTurbinePerformanceMap, path; group=group)
+    return Turbine.read_toml(Turbine.TabulatedTurbinePerformanceMap, path; group=group)
 end
 
 function _parsed_opt(parsed::Dict{String,Any}, primary::String, fallback::String)
@@ -54,22 +44,22 @@ function _parsed_opt(parsed::Dict{String,Any}, primary::String, fallback::String
 end
 
 function _load_map(path::AbstractString; kind::Symbol=:auto, group::Union{Nothing,String}=nothing)
-    format = _infer_format(path)
+    _infer_format(path)
     kind in (:auto, :compressor, :turbine) ||
         error("unsupported kind=$(kind), expected auto|compressor|turbine")
 
     if kind == :compressor
         g = isnothing(group) ? _default_group(Val(:compressor)) : group
-        return _read_map(Val(:compressor), format, path, g), :compressor
+        return _read_map(Val(:compressor), path, g), :compressor
     elseif kind == :turbine
         g = isnothing(group) ? _default_group(Val(:turbine)) : group
-        return _read_map(Val(:turbine), format, path, g), :turbine
+        return _read_map(Val(:turbine), path, g), :turbine
     end
 
     for k in (:compressor, :turbine)
         g = isnothing(group) ? _default_group(Val(k)) : group
         try
-            return _read_map(Val(k), format, path, g), k
+            return _read_map(Val(k), path, g), k
         catch
         end
     end
@@ -222,7 +212,7 @@ function _build_parser()
     )
     @add_arg_table! settings begin
         "map_path"
-            help = "input performance map (.toml/.h5/.hdf5)"
+            help = "input performance map (.toml)"
             required = true
         "--kind"
             help = "map kind: auto, compressor, or turbine"

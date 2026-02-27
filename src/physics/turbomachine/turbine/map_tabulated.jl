@@ -2,11 +2,10 @@
 Tabulated turbine performance map implementation.
 """
 
-using HDF5
 using TOML
 using ....Utility: AbstractTableMap, interpolation_map, table_evaluate
 using ....Utility: table_xgrid, table_ygrid, table_values, table_interpolation
-import ....Utility: write_hdf5, read_hdf5, write_toml, read_toml
+import ....Utility: write_toml, read_toml
 
 abstract type AbstractTurbinePerformanceMap end
 
@@ -140,57 +139,6 @@ function turbine_performance_map_from_stagnation(
         mdot=mdot,
         eta=vals.eta,
     )
-end
-
-function write_hdf5(
-    parent::Union{HDF5.File, HDF5.Group},
-    name::AbstractString,
-    map::TabulatedTurbinePerformanceMap,
-)
-    haskey(parent, name) && error("HDF5 object $(name) already exists")
-    group = create_group(parent, name)
-    attrs(group)["Tt_ref"] = map.Tt_ref
-    attrs(group)["Pt_ref"] = map.Pt_ref
-    write_hdf5(group, "mdot_corr_map", map.mdot_corr_map)
-    write_hdf5(group, "eta_map", map.eta_map)
-    return nothing
-end
-
-function read_hdf5(
-    ::Type{TabulatedTurbinePerformanceMap},
-    parent::Union{HDF5.File, HDF5.Group},
-    name::AbstractString,
-)
-    haskey(parent, name) || error("missing HDF5 object $(name)")
-    group = parent[name]
-    haskey(attrs(group), "Tt_ref") || error("missing attribute Tt_ref")
-    haskey(attrs(group), "Pt_ref") || error("missing attribute Pt_ref")
-    Tt_ref = Float64(attrs(group)["Tt_ref"])
-    Pt_ref = Float64(attrs(group)["Pt_ref"])
-    mdot_corr_map = read_hdf5(AbstractTableMap, group, "mdot_corr_map")
-    eta_map = read_hdf5(AbstractTableMap, group, "eta_map")
-    return TabulatedTurbinePerformanceMap(Tt_ref, Pt_ref, mdot_corr_map, eta_map)
-end
-
-function write_hdf5(
-    map::TabulatedTurbinePerformanceMap,
-    path::AbstractString;
-    group::AbstractString="turbine_map",
-)
-    h5open(path, "w") do file
-        write_hdf5(file, group, map)
-    end
-    return path
-end
-
-function read_hdf5(
-    ::Type{TabulatedTurbinePerformanceMap},
-    path::AbstractString;
-    group::AbstractString="turbine_map",
-)
-    return h5open(path, "r") do file
-        read_hdf5(TabulatedTurbinePerformanceMap, file, group)
-    end
 end
 
 function _table_to_rows(table::AbstractMatrix{<:Real})

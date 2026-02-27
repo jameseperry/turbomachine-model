@@ -5,12 +5,10 @@ export BilinearMap, BicubicMap
 export interpolation_map
 export bilinear_evaluate, bicubic_evaluate, table_evaluate
 export table_xgrid, table_ygrid, table_values, table_interpolation
-export write_hdf5, read_hdf5
 export write_toml, read_toml
 
 include("bilinear_map.jl")
 include("bicubic_map.jl")
-include("hdf5_io.jl")
 include("toml_io.jl")
 
 table_xgrid(map::AbstractTableMap) = error("table_xgrid not implemented for $(typeof(map))")

@@ -289,14 +289,6 @@
     end
 
     @testset "Map IO" begin
-        table_map_path = tempname() * ".h5"
-        U.write_hdf5(pm.pr_map, table_map_path)
-        table_map_loaded = U.read_hdf5(U.AbstractTableMap, table_map_path)
-        @test U.table_interpolation(table_map_loaded) == :bilinear
-        @test U.table_xgrid(table_map_loaded) == U.table_xgrid(pm.pr_map)
-        @test U.table_ygrid(table_map_loaded) == U.table_ygrid(pm.pr_map)
-        @test U.table_values(table_map_loaded) == U.table_values(pm.pr_map)
-
         table_map_toml_path = tempname() * ".toml"
         U.write_toml(pm.pr_map, table_map_toml_path)
         table_map_toml_loaded = U.read_toml(U.AbstractTableMap, table_map_toml_path)
@@ -305,14 +297,7 @@
         @test U.table_ygrid(table_map_toml_loaded) == U.table_ygrid(pm.pr_map)
         @test U.table_values(table_map_toml_loaded) == U.table_values(pm.pr_map)
 
-        compressor_map_path = tempname() * ".h5"
-        TM.write_hdf5(pm_bicubic, compressor_map_path)
-        pm_loaded = TM.read_hdf5(TM.TabulatedCompressorPerformanceMap, compressor_map_path)
         vals_ref = TM.compressor_performance_map(pm_bicubic, 2.5, 15.0)
-        vals_loaded = TM.compressor_performance_map(pm_loaded, 2.5, 15.0)
-        @test isapprox(vals_loaded.PR, vals_ref.PR; rtol=1e-12)
-        @test isapprox(vals_loaded.eta, vals_ref.eta; rtol=1e-12)
-
         compressor_map_toml_path = tempname() * ".toml"
         TM.write_toml(pm_bicubic, compressor_map_toml_path)
         pm_toml_loaded = TM.read_toml(TM.TabulatedCompressorPerformanceMap, compressor_map_toml_path)
@@ -329,14 +314,7 @@
             [0.8 0.8; 0.8 0.8];
             interpolation=:bilinear,
         )
-        turbine_map_path = tempname() * ".h5"
-        TT.write_hdf5(turbine_map, turbine_map_path)
-        map_const_loaded = TT.read_hdf5(TT.TabulatedTurbinePerformanceMap, turbine_map_path)
         vals_t_ref = TT.turbine_performance_map(turbine_map, 1.5, 2.5)
-        vals_t_loaded = TT.turbine_performance_map(map_const_loaded, 1.5, 2.5)
-        @test isapprox(vals_t_loaded.mdot_corr, vals_t_ref.mdot_corr; rtol=1e-12)
-        @test isapprox(vals_t_loaded.eta, vals_t_ref.eta; rtol=1e-12)
-
         turbine_map_toml_path = tempname() * ".toml"
         TT.write_toml(turbine_map, turbine_map_toml_path)
         turbine_map_toml_loaded = TT.read_toml(TT.TabulatedTurbinePerformanceMap, turbine_map_toml_path)
