@@ -8,10 +8,10 @@ using ....Utility: table_xgrid, table_ygrid, table_values, table_interpolation
 import ....Utility: write_toml, read_toml
 
 """
-Tabulated compressor performance map on corrected coordinates.
+Tabulated compressor performance map on physical speed and corrected flow.
 
 Fields:
-- `Tt_ref`: reference total temperature for corrected normalization.
+- `Tt_ref`: reference total temperature for flow correction.
 - `Pt_ref`: reference total pressure for corrected normalization.
 - `pr_map`: interpolant for total-pressure-ratio (`Pt_out/Pt_in`).
 - `eta_map`: interpolant for adiabatic efficiency.
@@ -85,15 +85,14 @@ function performance_map_domain(map::TabulatedCompressorPerformanceMap)
     )
 end
 
-"""Corrected shaft speed from physical speed and local total temperature."""
-corrected_speed(omega::Real, Tt_in::Real, Tt_ref::Real) =
-    omega / sqrt(Tt_in / Tt_ref)
+"""Tabulated maps currently use physical shaft speed directly (omega in rad/s)."""
+corrected_speed(omega::Real, Tt_in::Real, Tt_ref::Real) = omega
 
 """Corrected mass flow from physical flow and local total conditions."""
 corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, Tt_ref::Real, Pt_ref::Real) =
     mdot * sqrt(Tt_in / Tt_ref) / (Pt_in / Pt_ref)
 
-corrected_speed(omega::Real, Tt_in::Real, map::AbstractCompressorPerformanceMap) =
+corrected_speed(omega::Real, Tt_in::Real, map::TabulatedCompressorPerformanceMap) =
     corrected_speed(omega, Tt_in, map.Tt_ref)
 
 corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, map::AbstractCompressorPerformanceMap) =
@@ -239,7 +238,7 @@ function demo_tabulated_compressor_performance_map(; interpolation::Symbol=:bili
     TabulatedCompressorPerformanceMap(
         288.15,
         101_325.0,
-        [0.6, 0.8, 1.0],
+        [600.0, 800.0, 1000.0],
         [12.0, 16.0, 20.0],
         [
             1.35 1.55 1.70;

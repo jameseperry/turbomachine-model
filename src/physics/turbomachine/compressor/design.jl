@@ -6,14 +6,31 @@ using TOML
 import ....Utility: write_toml, read_toml
 
 Base.@kwdef struct CompressorDesign{T<:Real}
+    # Compressor family/type assumption used by the empirical compilation logic.
     kind::Symbol = :axial
+
+    # Number of aerodynamic stages (mainly relevant for axial machines).
     stage_count::Int = 8
+
+    # Stage loading coefficient proxy; larger implies more work per stage (-).
     stage_loading::T = 0.55
+
+    # Rotor tip Mach number at the design point; influences speed/choke tendencies (-).
     tip_mach_design::T = 0.50
+
+    # Aggregate measure of diffusion aggressiveness in blade rows and passages (-).
     diffusion_aggressiveness::T = 0.50
+
+    # Effective tip-clearance severity fraction; larger implies more leakage/losses (-).
     clearance_fraction::T = 0.20
+
+    # Diffuser quality factor capturing pressure-recovery quality (-).
     diffuser_quality::T = 0.60
+
+    # Variable-geometry authority/usage level (e.g., IGV/VSV effectiveness) (-).
     variable_geometry::T = 0.30
+
+    # Reynolds-number quality factor capturing viscous-performance quality (-).
     reynolds_quality::T = 0.80
 end
 

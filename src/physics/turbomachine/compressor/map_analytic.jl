@@ -6,10 +6,10 @@ using TOML
 import ....Utility: write_toml, read_toml
 
 """
-Analytic compressor performance map on corrected coordinates.
+Analytic compressor performance map on physical shaft speed and corrected flow.
 
 This parametric model returns pressure ratio (`PR`) and adiabatic efficiency (`eta`)
-as functions of corrected speed and corrected mass flow.
+as functions of physical shaft speed (`omega`, rad/s) and corrected mass flow.
 """
 Base.@kwdef struct AnalyticCompressorPerformanceMap{T<:Real} <: AbstractCompressorPerformanceMap
     # Surge boundary: mdot_surge(N) = ms0 + ms1*(N-1) + ms2*(N-1)^2
@@ -55,16 +55,26 @@ Base.@kwdef struct AnalyticCompressorPerformanceMap{T<:Real} <: AbstractCompress
     eta_min::T = T(0.50)
     eta_max_clip::T = T(0.92)
 
-    # Reference stagnation conditions for corrected normalization
+    # Reference stagnation conditions for flow correction
     Tt_ref::T = T(288.15)
     Pt_ref::T = T(101_325.0)
 
-    # Recommended corrected speed domain
-    omega_corr_min::T = T(0.6)
-    omega_corr_max::T = T(1.0)
+    # Internal speed normalization and recommended physical speed domain.
+    omega_ref::T = T(1_000.0)
+    omega_norm_min::T = T(0.6)
+    omega_norm_max::T = T(1.0)
 end
 
 const _ANALYTIC_MAP_FIELDS = fieldnames(AnalyticCompressorPerformanceMap{Float64})
+
+"""Analytic maps use physical shaft speed directly (`omega` in rad/s)."""
+corrected_speed(omega::Real, Tt_in::Real, map::AnalyticCompressorPerformanceMap) = omega
+
+@inline function _omega_norm(map::AnalyticCompressorPerformanceMap{T}, omega::Real) where {T<:Real}
+    U = promote_type(typeof(omega), T)
+    omega_ref = max(U(map.omega_ref), eps(U))
+    return U(omega) / omega_ref
+end
 
 @inline function _analytic_softplus(x::T, k::T) where {T<:Real}
     z = k * x
@@ -89,25 +99,25 @@ end
     return xT - _analytic_softplus(xT - one(T), kT) + _analytic_softplus(-xT, kT)
 end
 
-@inline function mdot_surge(map::AnalyticCompressorPerformanceMap, omega_corr::Real)
-    N = omega_corr
-    d = N - 1
+@inline function mdot_surge(map::AnalyticCompressorPerformanceMap, omega::Real)
+    N = _omega_norm(map, omega)
+    d = N - one(N)
     return map.ms0 + map.ms1 * d + map.ms2 * d * d
 end
 
-@inline function mdot_choke(map::AnalyticCompressorPerformanceMap, omega_corr::Real)
-    N = omega_corr
-    d = N - 1
+@inline function mdot_choke(map::AnalyticCompressorPerformanceMap, omega::Real)
+    N = _omega_norm(map, omega)
+    d = N - one(N)
     return map.mc0 + map.mc1 * d + map.mc2 * d * d
 end
 
 @inline function _normalized_flow_u(
     map::AnalyticCompressorPerformanceMap,
-    omega_corr::Real,
+    omega::Real,
     mdot_corr::Real,
 )
-    ms = mdot_surge(map, omega_corr)
-    mc = mdot_choke(map, omega_corr)
+    ms = mdot_surge(map, omega)
+    mc = mdot_choke(map, omega)
     delta_m = mc - ms
     denom = abs(delta_m) > 1e-12 ? delta_m : oftype(delta_m, 1e-12)
     x = (mdot_corr - ms) / denom
@@ -146,15 +156,15 @@ end
     return bump * p_surge * p_choke
 end
 
-@inline function _pr_speed_scale(map::AnalyticCompressorPerformanceMap{T}, omega_corr::Real) where {T<:Real}
-    U = promote_type(typeof(omega_corr), T)
-    N = U(omega_corr)
+@inline function _pr_speed_scale(map::AnalyticCompressorPerformanceMap{T}, omega::Real) where {T<:Real}
+    U = promote_type(typeof(omega), T)
+    N = _omega_norm(map, omega)
     N_pos = max(N, zero(U))
     return U(map.Pi_max) * (N_pos^U(map.pr_speed_exp))
 end
 
 """
-Evaluate a compressor map at corrected coordinates.
+Evaluate a compressor map at physical shaft speed and corrected mass flow.
 
 Returns named tuple `(PR, eta)` where:
 - `PR` is total-pressure ratio (`Pt_out/Pt_in`)
@@ -162,14 +172,14 @@ Returns named tuple `(PR, eta)` where:
 """
 function compressor_performance_map(
     map::AnalyticCompressorPerformanceMap{T},
-    omega_corr::Real,
+    omega::Real,
     mdot_corr::Real,
 ) where {T<:Real}
-    U = promote_type(typeof(omega_corr), typeof(mdot_corr), T)
-    N = U(omega_corr)
-    u = U(_normalized_flow_u(map, omega_corr, mdot_corr))
+    U = promote_type(typeof(omega), typeof(mdot_corr), T)
+    N = _omega_norm(map, omega)
+    u = U(_normalized_flow_u(map, omega, mdot_corr))
 
-    Pi = _pr_speed_scale(map, omega_corr)
+    Pi = _pr_speed_scale(map, omega)
     PR = one(U) + Pi * _pr_shape(map, u)
 
     eta_peak = U(map.eta_max) - U(map.eta_speed_quad) * (N - one(U))^2
@@ -185,8 +195,8 @@ function compressor_performance_map(
 end
 
 function performance_map_domain(map::AnalyticCompressorPerformanceMap)
-    omega_min = min(map.omega_corr_min, map.omega_corr_max)
-    omega_max = max(map.omega_corr_min, map.omega_corr_max)
+    omega_min = min(map.omega_norm_min, map.omega_norm_max) * map.omega_ref
+    omega_max = max(map.omega_norm_min, map.omega_norm_max) * map.omega_ref
     smin = mdot_surge(map, omega_min)
     smax = mdot_surge(map, omega_max)
     cmin = mdot_choke(map, omega_min)

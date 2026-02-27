@@ -55,19 +55,19 @@
     @test isapprox(from_inlet.eta, 0.91; rtol=1e-12)
 
     cmp_demo = TM.demo_tabulated_compressor_performance_map()
-    cmp_vals = TM.compressor_performance_map(cmp_demo, 0.8, 16.0)
+    cmp_vals = TM.compressor_performance_map(cmp_demo, 800.0, 16.0)
     @test cmp_vals.PR > 1.0
     cmp_domain = TM.performance_map_domain(cmp_demo)
-    @test cmp_domain.omega_corr == (0.6, 1.0)
+    @test cmp_domain.omega_corr == (600.0, 1000.0)
     @test cmp_domain.mdot_corr == (12.0, 20.0)
-    @test isapprox(cmp_domain.mdot_corr_flow_range.surge(0.75), 12.0; rtol=1e-12)
-    @test isapprox(cmp_domain.mdot_corr_flow_range.choke(0.75), 20.0; rtol=1e-12)
+    @test isapprox(cmp_domain.mdot_corr_flow_range.surge(750.0), 12.0; rtol=1e-12)
+    @test isapprox(cmp_domain.mdot_corr_flow_range.choke(750.0), 20.0; rtol=1e-12)
 
     cmp_analytic_demo = TM.demo_analytic_compressor_performance_map()
     cmp_analytic_domain = TM.performance_map_domain(cmp_analytic_demo)
-    @test cmp_analytic_domain.omega_corr == (0.6, 1.0)
-    ms = cmp_analytic_domain.mdot_corr_flow_range.surge(0.8)
-    mc = cmp_analytic_domain.mdot_corr_flow_range.choke(0.8)
+    @test cmp_analytic_domain.omega_corr == (600.0, 1000.0)
+    ms = cmp_analytic_domain.mdot_corr_flow_range.surge(800.0)
+    mc = cmp_analytic_domain.mdot_corr_flow_range.choke(800.0)
     @test ms < mc
 
     @testset "Turbomachine Residuals" begin

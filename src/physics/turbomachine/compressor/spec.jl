@@ -6,12 +6,33 @@ using TOML
 import ....Utility: write_toml, read_toml
 
 Base.@kwdef struct CompressorSpec{T<:Real}
+    # Design total pressure ratio at nominal operating point: Pt_out / Pt_in (-).
     pr_design::T = 3.0
+
+    # Design adiabatic (isentropic) efficiency at nominal operating point (-).
     eta_design::T = 0.88
+
+    # Baseline corrected-flow span between surge and choke around design speed.
+    # In the compiled map this sets:
+    #   ms0 = 1 - flow_range/2, mc0 = 1 + flow_range/2
+    # so larger values widen the map horizontally in corrected flow (-).
     flow_range::T = 0.55
+
+    # Relative standoff from surge at design operation.
+    # Higher values generally produce a "softer" surge-side behavior by reducing
+    # surge-side PR/eta penalties and flattening surge-boundary speed slope (-).
     surge_margin::T = 0.60
+
+    # How rapidly performance degrades near choke; higher means sharper choke behavior (-).
     choke_sharpness::T = 0.40
+
+    # Strength of speed dependence in the compiled map.
+    # Higher values increase PR speed curvature/exponent, increase eta variation
+    # with speed, and increase migration of eta-peak flow with speed (-).
     speed_sensitivity::T = 0.50
+
+    # Reference shaft speed used to nondimensionalize speed in the analytic map (rad/s).
+    omega_ref::T = 1_000.0
 end
 
 const _COMPRESSOR_SPEC_FIELDS = fieldnames(CompressorSpec{Float64})
@@ -35,6 +56,7 @@ function compile_compressor_map(spec::CompressorSpec{T}; kind::Symbol=:axial) wh
     surge_margin = _clamp01(spec.surge_margin)
     choke_sharpness = _clamp01(spec.choke_sharpness)
     speed_sensitivity = _clamp01(spec.speed_sensitivity)
+    omega_ref = max(spec.omega_ref, eps(T))
 
     ms0 = T(1.0) - flow_range / T(2)
     mc0 = T(1.0) + flow_range / T(2)
@@ -109,6 +131,7 @@ function compile_compressor_map(spec::CompressorSpec{T}; kind::Symbol=:axial) wh
         Dc_eta=Dc_eta, del_c_eta=del_c_eta,
         eta_min=T(0.50), eta_max_clip=T(0.92),
         Tt_ref=T(288.15), Pt_ref=T(101_325.0),
+        omega_ref=omega_ref,
     )
 end
 

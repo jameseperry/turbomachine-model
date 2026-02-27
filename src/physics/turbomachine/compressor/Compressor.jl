@@ -8,6 +8,7 @@ include("map_analytic.jl")
 include("spec.jl")
 include("design.jl")
 include("residuals.jl")
+include("operating_point.jl")
 
 export AbstractCompressorPerformanceMap
 export TabulatedCompressorPerformanceMap
@@ -26,5 +27,7 @@ export compressor_residuals
 export compressor_residuals_scaled
 export compressor_residual_scales
 export solve_compressor_operating_point
+export compressor_pr_roots
+export solve_compressor_operating_sweep
 
 end # module Compressor
