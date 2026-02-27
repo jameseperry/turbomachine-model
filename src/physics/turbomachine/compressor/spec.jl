@@ -156,3 +156,8 @@ function read_toml(
 )
     return read_toml(CompressorSpec{Float64}, path; group=group)
 end
+
+"""Demo compressor spec for development/testing."""
+function demo_compressor_spec()
+    return CompressorSpec{Float64}()
+end

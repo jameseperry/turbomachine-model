@@ -13,7 +13,9 @@ export TabulatedCompressorPerformanceMap
 export AnalyticCompressorPerformanceMap
 export corrected_speed, corrected_flow
 export compressor_performance_map, compressor_performance_map_from_stagnation
-export demo_compressor_performance_map
+export demo_tabulated_compressor_performance_map
+export demo_analytic_compressor_performance_map
+export demo_compressor_spec, demo_compressor_design
 export write_toml, read_toml
 export CompressorSpec, CompressorDesign
 export compile_compressor_spec, compile_compressor_map

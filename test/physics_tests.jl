@@ -54,7 +54,7 @@
     @test isapprox(from_inlet.PR, 4.5; rtol=1e-12)
     @test isapprox(from_inlet.eta, 0.91; rtol=1e-12)
 
-    cmp_demo = TM.demo_compressor_performance_map()
+    cmp_demo = TM.demo_tabulated_compressor_performance_map()
     cmp_vals = TM.compressor_performance_map(cmp_demo, 0.8, 16.0)
     @test cmp_vals.PR > 1.0
 
@@ -289,6 +289,13 @@
     end
 
     @testset "Map IO" begin
+        analytic_demo = TM.demo_analytic_compressor_performance_map()
+        @test analytic_demo isa TM.AnalyticCompressorPerformanceMap{Float64}
+        spec_demo = TM.demo_compressor_spec()
+        @test spec_demo isa TM.CompressorSpec{Float64}
+        design_demo = TM.demo_compressor_design()
+        @test design_demo isa TM.CompressorDesign{Float64}
+
         analytic_map = TM.AnalyticCompressorPerformanceMap{Float64}(
             Pi_max=1.75,
             pr_speed_exp=2.25,

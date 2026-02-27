@@ -164,3 +164,8 @@ function read_toml(
 )
     return read_toml(CompressorDesign{Float64}, path; group=group)
 end
+
+"""Demo compressor design for development/testing."""
+function demo_compressor_design()
+    return CompressorDesign{Float64}()
+end

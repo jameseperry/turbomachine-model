@@ -205,3 +205,8 @@ function read_toml(
 )
     return read_toml(AnalyticCompressorPerformanceMap{Float64}, path; group=group)
 end
+
+"""Demo analytic compressor map for development/testing."""
+function demo_analytic_compressor_performance_map()
+    return AnalyticCompressorPerformanceMap{Float64}()
+end

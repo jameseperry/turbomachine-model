@@ -242,7 +242,7 @@ function read_toml(
 end
 
 """Demo tabulated turbine map for development/testing."""
-function demo_turbine_performance_map(; interpolation::Symbol=:bilinear)
+function demo_tabulated_turbine_performance_map(; interpolation::Symbol=:bilinear)
     TabulatedTurbinePerformanceMap(
         288.15,
         101_325.0,

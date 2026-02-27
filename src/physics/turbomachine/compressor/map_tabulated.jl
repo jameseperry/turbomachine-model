@@ -225,7 +225,7 @@ function read_toml(
 end
 
 """Demo tabulated compressor map for development/testing."""
-function demo_compressor_performance_map(; interpolation::Symbol=:bilinear)
+function demo_tabulated_compressor_performance_map(; interpolation::Symbol=:bilinear)
     TabulatedCompressorPerformanceMap(
         288.15,
         101_325.0,
