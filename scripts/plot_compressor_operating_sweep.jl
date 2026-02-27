@@ -6,7 +6,6 @@ using Plots
 
 const Fluids = TurboMachineModel.Physics.Fluids
 const TM = TurboMachineModel.Physics.Turbomachine.Compressor
-const U = TurboMachineModel.Utility
 
 function _infer_format(path::AbstractString)
     ext = lowercase(splitext(path)[2])
@@ -16,9 +15,25 @@ function _infer_format(path::AbstractString)
     error("unsupported map extension $(ext) for path $(path); expected .toml")
 end
 
-function _load_compressor_map(path::AbstractString; group::AbstractString="compressor_map")
+function _load_compressor_map(
+    path::AbstractString;
+    group::Union{Nothing,AbstractString}=nothing,
+)
     _infer_format(path)
-    return TM.read_toml(TM.TabulatedCompressorPerformanceMap, path; group=group)
+    groups = isnothing(group) ? ("compressor_map", "compressor_analytic_map") : (group,)
+    for g in groups
+        try
+            return TM.read_toml(TM.TabulatedCompressorPerformanceMap, path; group=g)
+        catch
+        end
+        try
+            return TM.read_toml(TM.AnalyticCompressorPerformanceMap, path; group=g)
+        catch
+        end
+    end
+    error(
+        "failed to load compressor map from $(path); expected tabulated group compressor_map or analytic group compressor_analytic_map",
+    )
 end
 
 function _parsed_opt(parsed::Dict{String,Any}, primary::String, fallback::String)
@@ -29,7 +44,7 @@ function _parsed_opt(parsed::Dict{String,Any}, primary::String, fallback::String
 end
 
 function _inner_operating_point(
-    map::TM.TabulatedCompressorPerformanceMap,
+    map::TM.AbstractCompressorPerformanceMap,
     eos::Fluids.AbstractEOS,
     pt_in::Float64,
     ht_in::Float64,
@@ -52,16 +67,43 @@ function _inner_operating_point(
     )
 end
 
-function _tau_mismatch(
-    map::TM.TabulatedCompressorPerformanceMap,
+function _solve_at_pt_out(
+    map::TM.AbstractCompressorPerformanceMap,
     eos::Fluids.AbstractEOS,
     pt_in::Float64,
     ht_in::Float64,
+    Tt_in::Float64,
     omega::Float64,
-    tau_load::Float64,
     pt_out::Float64,
-    guess,
+    seed::Union{Nothing,NamedTuple}=nothing,
 )
+    target_pr = pt_out / pt_in
+    branch_seed = _map_seed_for_target_pr(
+        map,
+        eos,
+        pt_in,
+        ht_in,
+        Tt_in,
+        omega,
+        target_pr,
+        isnothing(seed) ? nothing : seed.mdot,
+    )
+
+    if !isnothing(seed)
+        sol = _inner_operating_point(
+            map,
+            eos,
+            pt_in,
+            ht_in,
+            omega,
+            pt_out,
+            seed.mdot,
+            seed.ht_out,
+            seed.tau,
+        )
+        sol.converged && return (sol=sol, branch_seed=branch_seed)
+    end
+
     sol = _inner_operating_point(
         map,
         eos,
@@ -69,155 +111,223 @@ function _tau_mismatch(
         ht_in,
         omega,
         pt_out,
-        guess.mdot,
-        guess.ht_out,
-        guess.tau,
+        branch_seed.mdot,
+        branch_seed.ht_out,
+        branch_seed.tau,
     )
-    if !sol.converged
-        return (ok=false, mismatch=NaN, sol=sol)
-    end
-    return (ok=true, mismatch=sol.tau - tau_load, sol=sol)
+    return (sol=sol, branch_seed=branch_seed)
 end
 
-function _solve_at_speed_via_operating_point(
-    map::TM.TabulatedCompressorPerformanceMap,
+function _map_seed_for_target_pr(
+    map::TM.AbstractCompressorPerformanceMap,
     eos::Fluids.AbstractEOS,
     pt_in::Float64,
     ht_in::Float64,
+    Tt_in::Float64,
     omega::Float64,
-    tau_load::Float64,
-    seed,
+    target_pr::Float64,
+    preferred_mdot::Union{Nothing,Float64}=nothing,
 )
-    pr_min = max(1.01, minimum(U.table_values(map.pr_map)) * 0.9)
-    pr_max = maximum(U.table_values(map.pr_map)) * 1.1
-    pt_min = pt_in * pr_min
-    pt_max = pt_in * pr_max
+    domain = TM.performance_map_domain(map)
+    omega_corr = TM.corrected_speed(omega, Tt_in, map)
+    flow_range = domain.mdot_corr_flow_range
+    m_surge = flow_range.surge(omega_corr)
+    m_choke = flow_range.choke(omega_corr)
+    m_lo = min(m_surge, m_choke)
+    m_hi = max(m_surge, m_choke)
 
-    n_scan = 17
-    scan_pts = collect(range(pt_min, pt_max, length=n_scan))
-    scan_vals = Vector{Tuple{Float64,Float64,Any}}()
-    local_guess = (mdot=seed.mdot, ht_out=seed.ht_out, tau=seed.tau)
+    m_grid = collect(range(m_lo, m_hi, length=41))
+    pr_vals = similar(m_grid)
+    eta_vals = similar(m_grid)
+    for i in eachindex(m_grid)
+        vals = TM.compressor_performance_map(map, omega_corr, m_grid[i])
+        pr_vals[i] = vals.PR
+        eta_vals[i] = vals.eta
+    end
 
-    for pt_out in scan_pts
-        eval = _tau_mismatch(map, eos, pt_in, ht_in, omega, tau_load, pt_out, local_guess)
-        if eval.ok
-            push!(scan_vals, (pt_out, eval.mismatch, eval.sol))
-            local_guess = (mdot=eval.sol.mdot, ht_out=eval.sol.ht_out, tau=eval.sol.tau)
+    # Find mdot_corr roots where PR(mdot_corr) = target_pr.
+    # If multiple roots exist, prefer continuity from prior mdot; otherwise use
+    # the higher-flow (choke-side) branch.
+    mdot_corr_candidates = Float64[]
+    eta_candidates = Float64[]
+    for i in 1:(length(m_grid) - 1)
+        f1 = pr_vals[i] - target_pr
+        f2 = pr_vals[i + 1] - target_pr
+        if f1 == 0.0
+            push!(mdot_corr_candidates, m_grid[i])
+            push!(eta_candidates, eta_vals[i])
+            continue
         end
-    end
-
-    length(scan_vals) >= 2 || return (converged=false, reason="no converged inner solves")
-
-    bracket_idx = nothing
-    for k in 1:(length(scan_vals) - 1)
-        left = scan_vals[k]
-        right = scan_vals[k + 1]
-        sign(left[2]) == sign(right[2]) && continue
-        bracket_idx = k
-        break
-    end
-    bracket_idx === nothing && return (converged=false, reason="no bracket found")
-
-    a_pt, a_mis, a_sol = scan_vals[bracket_idx]
-    b_pt, b_mis, b_sol = scan_vals[bracket_idx + 1]
-    tau_tol = max(1e-8 * max(abs(tau_load), 1.0), 1e-4)
-    pt_tol = 1e-8 * max(pt_in, 1.0)
-
-    abs(a_mis) < abs(b_mis) ? (best_pt, best_mis, best_sol) = (a_pt, a_mis, a_sol) :
-                              (best_pt, best_mis, best_sol) = (b_pt, b_mis, b_sol)
-
-    for _ in 1:40
-        mid_pt = 0.5 * (a_pt + b_pt)
-        mid_guess = abs(a_mis) <= abs(b_mis) ?
-                    (mdot=a_sol.mdot, ht_out=a_sol.ht_out, tau=a_sol.tau) :
-                    (mdot=b_sol.mdot, ht_out=b_sol.ht_out, tau=b_sol.tau)
-
-        mid_eval = _tau_mismatch(map, eos, pt_in, ht_in, omega, tau_load, mid_pt, mid_guess)
-        if !mid_eval.ok
-            alt_guess = abs(a_mis) > abs(b_mis) ?
-                        (mdot=a_sol.mdot, ht_out=a_sol.ht_out, tau=a_sol.tau) :
-                        (mdot=b_sol.mdot, ht_out=b_sol.ht_out, tau=b_sol.tau)
-            mid_eval = _tau_mismatch(map, eos, pt_in, ht_in, omega, tau_load, mid_pt, alt_guess)
-            if !mid_eval.ok
-                continue
+        if f1 * f2 > 0.0
+            continue
+        end
+        a = m_grid[i]
+        b = m_grid[i + 1]
+        fa = f1
+        mdot_root = 0.5 * (a + b)
+        eta_root = 0.5 * (eta_vals[i] + eta_vals[i + 1])
+        for _ in 1:40
+            mid = 0.5 * (a + b)
+            vals = TM.compressor_performance_map(map, omega_corr, mid)
+            fm = vals.PR - target_pr
+            eta_root = vals.eta
+            mdot_root = mid
+            if abs(fm) <= 1e-8
+                break
+            end
+            if fa * fm <= 0.0
+                b = mid
+            else
+                a = mid
+                fa = fm
             end
         end
+        push!(mdot_corr_candidates, mdot_root)
+        push!(eta_candidates, eta_root)
+    end
 
-        mid_mis = mid_eval.mismatch
-        mid_sol = mid_eval.sol
-        if abs(mid_mis) < abs(best_mis)
-            best_pt, best_mis, best_sol = mid_pt, mid_mis, mid_sol
-        end
-
-        if abs(mid_mis) <= tau_tol || abs(b_pt - a_pt) <= pt_tol
-            return (
-                converged=true,
-                pt_out=mid_pt,
-                mdot=mid_sol.mdot,
-                ht_out=mid_sol.ht_out,
-                tau=mid_sol.tau,
-                PR=mid_pt / pt_in,
-            )
-        end
-
-        if sign(mid_mis) == sign(a_mis)
-            a_pt, a_mis, a_sol = mid_pt, mid_mis, mid_sol
+    mdot_corr_guess = m_grid[argmin(abs.(pr_vals .- target_pr))]
+    eta_guess = eta_vals[argmin(abs.(pr_vals .- target_pr))]
+    if !isempty(mdot_corr_candidates)
+        if preferred_mdot !== nothing
+            preferred_mdot_corr = TM.corrected_flow(preferred_mdot, Tt_in, pt_in, map)
+            k = argmin(abs.(mdot_corr_candidates .- preferred_mdot_corr))
+            mdot_corr_guess = mdot_corr_candidates[k]
+            eta_guess = eta_candidates[k]
         else
-            b_pt, b_mis, b_sol = mid_pt, mid_mis, mid_sol
+            k = argmax(mdot_corr_candidates)
+            mdot_corr_guess = mdot_corr_candidates[k]
+            eta_guess = eta_candidates[k]
         end
     end
 
-    if abs(best_mis) <= tau_tol
-        return (
-            converged=true,
-            pt_out=best_pt,
-            mdot=best_sol.mdot,
-            ht_out=best_sol.ht_out,
-            tau=best_sol.tau,
-            PR=best_pt / pt_in,
-        )
+    corr_to_phys_scale = (pt_in / map.Pt_ref) / sqrt(Tt_in / map.Tt_ref)
+    mdot_guess = mdot_corr_guess * corr_to_phys_scale
+    eta_safe = max(eta_guess, 1e-3)
+    pt_out = pt_in * target_pr
+    h2s = Fluids.isentropic_enthalpy(eos, pt_in, ht_in, pt_out)
+    ht_out_guess = ht_in + (h2s - ht_in) / eta_safe
+    tau_guess = mdot_guess * (ht_out_guess - ht_in) / max(omega, 1e-6)
+
+    return (mdot=mdot_guess, ht_out=ht_out_guess, tau=tau_guess)
+end
+
+function _solve_with_pr_backoff(
+    map::TM.AbstractCompressorPerformanceMap,
+    eos::Fluids.AbstractEOS,
+    pt_in::Float64,
+    ht_in::Float64,
+    Tt_in::Float64,
+    omega::Float64,
+    target_pt_out::Float64,
+    seed::Union{Nothing,NamedTuple};
+    min_pt_out::Float64,
+    max_pt_out::Float64,
+    pt_out_tol::Float64=50.0,
+    max_iters::Int=24,
+)
+    pt_out_tol > 0 || error("pt_out_tol must be > 0")
+    max_iters >= 1 || error("max_iters must be >= 1")
+
+    lo = max(min_pt_out, pt_in)
+    hi = min(max_pt_out, target_pt_out)
+    lo <= hi || return (converged=false, reason="invalid backoff range")
+
+    hi_try = _solve_at_pt_out(map, eos, pt_in, ht_in, Tt_in, omega, hi, seed)
+    if hi_try.sol.converged
+        return (converged=true, sol=hi_try.sol, pt_out=hi, used_backoff=(hi < target_pt_out))
     end
 
-    return (converged=false, reason="bisection did not converge")
+    lo_try = _solve_at_pt_out(map, eos, pt_in, ht_in, Tt_in, omega, lo, seed)
+    if !lo_try.sol.converged
+        return (converged=false, reason="no converged solution in backoff range")
+    end
+
+    lo_sol = lo_try.sol
+    lo_seed = (mdot=lo_sol.mdot, ht_out=lo_sol.ht_out, tau=lo_sol.tau)
+
+    for _ in 1:max_iters
+        if (hi - lo) <= pt_out_tol
+            break
+        end
+        mid = 0.5 * (lo + hi)
+        mid_try = _solve_at_pt_out(map, eos, pt_in, ht_in, Tt_in, omega, mid, lo_seed)
+        if mid_try.sol.converged
+            lo = mid
+            lo_sol = mid_try.sol
+            lo_seed = (mdot=lo_sol.mdot, ht_out=lo_sol.ht_out, tau=lo_sol.tau)
+        else
+            hi = mid
+        end
+    end
+
+    return (converged=true, sol=lo_sol, pt_out=lo, used_backoff=true)
 end
 
 function sweep_compressor_operating_points(
-    map::TM.TabulatedCompressorPerformanceMap;
+    map::TM.AbstractCompressorPerformanceMap;
     omega_min::Float64=0.6,
     omega_max::Float64=1.0,
     n_points::Int=25,
-    tau_load::Float64=1.2e6,
     pt_in::Float64=101_325.0,
     Tt_in::Float64=288.15,
+    target_pr::Float64=2.0,
+    pr_backoff::Bool=true,
+    backoff_min_pt_out::Union{Nothing,Float64}=nothing,
+    backoff_max_pt_out::Union{Nothing,Float64}=nothing,
+    backoff_pt_out_tol::Float64=50.0,
+    backoff_max_iters::Int=24,
 )
+    target_pr > 1.0 || error("target_pr must be > 1.0")
     eos = Fluids.ideal_EOS()[:air]
     ht_in = Fluids.enthalpy_from_temperature(eos, Tt_in)
+    target_pt_out = pt_in * target_pr
+    min_pt_out = isnothing(backoff_min_pt_out) ? pt_in : backoff_min_pt_out
+    max_pt_out = isnothing(backoff_max_pt_out) ? target_pt_out : backoff_max_pt_out
 
     omegas = collect(range(omega_min, omega_max, length=n_points))
     prs = fill(NaN, n_points)
     mdots = fill(NaN, n_points)
     powers = fill(NaN, n_points)
     converged = fill(false, n_points)
+    backoff_used = fill(false, n_points)
 
-    mdot_scale = (pt_in / map.Pt_ref) / sqrt(Tt_in / map.Tt_ref)
-    mdot0 = 0.5 * (first(U.table_ygrid(map.pr_map)) + last(U.table_ygrid(map.pr_map))) * mdot_scale
-    map0 = TM.compressor_performance_map_from_stagnation(map, omegas[1], mdot0, Tt_in, pt_in)
-    pt_out0 = pt_in * map0.PR
-    h2s0 = Fluids.isentropic_enthalpy(eos, pt_in, ht_in, pt_out0)
-    ht_out0 = ht_in + (h2s0 - ht_in) / map0.eta
-    tau0 = mdot0 * (ht_out0 - ht_in) / omegas[1]
-    seed = (mdot=mdot0, ht_out=ht_out0, tau=tau0)
+    seed::Union{Nothing,NamedTuple{(:mdot, :ht_out, :tau),Tuple{Float64,Float64,Float64}}} = nothing
 
     for (i, omega) in enumerate(omegas)
-        sol = _solve_at_speed_via_operating_point(
+        direct_try = _solve_at_pt_out(
             map,
             eos,
             pt_in,
             ht_in,
+            Tt_in,
             omega,
-            tau_load,
+            target_pt_out,
             seed,
         )
+        sol = direct_try.sol
+
+        if !sol.converged && pr_backoff
+            backoff = _solve_with_pr_backoff(
+                map,
+                eos,
+                pt_in,
+                ht_in,
+                Tt_in,
+                omega,
+                target_pt_out,
+                seed;
+                min_pt_out=min_pt_out,
+                max_pt_out=max_pt_out,
+                pt_out_tol=backoff_pt_out_tol,
+                max_iters=backoff_max_iters,
+            )
+            if backoff.converged
+                sol = backoff.sol
+                backoff_used[i] = backoff.used_backoff
+            end
+        end
+
         if sol.converged
             prs[i] = sol.PR
             mdots[i] = sol.mdot
@@ -225,33 +335,25 @@ function sweep_compressor_operating_points(
             converged[i] = true
             seed = (mdot=sol.mdot, ht_out=sol.ht_out, tau=sol.tau)
         else
-            @warn "Operating-point solve failed at omega=$omega: $(sol.reason)"
+            @warn "Operating-point solve failed at omega=$omega: retcode=$(sol.retcode)"
+            seed = direct_try.branch_seed
         end
     end
 
-    return (omegas=omegas, prs=prs, mdots=mdots, powers=powers, converged=converged)
+    return (
+        omegas=omegas,
+        prs=prs,
+        mdots=mdots,
+        powers=powers,
+        converged=converged,
+        backoff_used=backoff_used,
+    )
 end
 
-function plot_compressor_operating_sweep(
-    map::TM.TabulatedCompressorPerformanceMap;
-    output_path::String="compressor_operating_sweep_via_operating_point_solver.png",
-    tau_load::Float64=1.2e6,
-    omega_min::Float64=0.6,
-    omega_max::Float64=1.0,
-    n_points::Int=25,
-    pt_in::Float64=101_325.0,
-    Tt_in::Float64=288.15,
+function _plot_compressor_operating_sweep_data(
+    data;
+    output_path::AbstractString="compressor_operating_sweep_via_operating_point_solver.png",
 )
-    data = sweep_compressor_operating_points(
-        map;
-        tau_load=tau_load,
-        omega_min=omega_min,
-        omega_max=omega_max,
-        n_points=n_points,
-        pt_in=pt_in,
-        Tt_in=Tt_in,
-    )
-
     p1 = plot(
         data.omegas,
         data.prs;
@@ -292,10 +394,61 @@ function plot_compressor_operating_sweep(
     println("Saved operating-point sweep plot to: $output_path")
 end
 
+function plot_compressor_operating_sweep(
+    map::TM.AbstractCompressorPerformanceMap;
+    output_path::String="compressor_operating_sweep_via_operating_point_solver.png",
+    omega_min::Float64=0.6,
+    omega_max::Float64=1.0,
+    n_points::Int=25,
+    pt_in::Float64=101_325.0,
+    Tt_in::Float64=288.15,
+    target_pr::Float64=2.0,
+    pr_backoff::Bool=true,
+    backoff_min_pt_out::Union{Nothing,Float64}=nothing,
+    backoff_max_pt_out::Union{Nothing,Float64}=nothing,
+    backoff_pt_out_tol::Float64=50.0,
+    backoff_max_iters::Int=24,
+)
+    data = sweep_compressor_operating_points(
+        map;
+        omega_min=omega_min,
+        omega_max=omega_max,
+        n_points=n_points,
+        pt_in=pt_in,
+        Tt_in=Tt_in,
+        target_pr=target_pr,
+        pr_backoff=pr_backoff,
+        backoff_min_pt_out=backoff_min_pt_out,
+        backoff_max_pt_out=backoff_max_pt_out,
+        backoff_pt_out_tol=backoff_pt_out_tol,
+        backoff_max_iters=backoff_max_iters,
+    )
+    _plot_compressor_operating_sweep_data(data; output_path=output_path)
+end
+
+function write_compressor_operating_sweep_csv(
+    data;
+    output_path::AbstractString="compressor_operating_sweep.csv",
+)
+    open(output_path, "w") do io
+        println(io, "omega,PR,mdot,power,converged,backoff_used")
+        for i in eachindex(data.omegas)
+            println(
+                io,
+                "$(data.omegas[i]),$(data.prs[i]),$(data.mdots[i]),$(data.powers[i]),$(data.converged[i]),$(data.backoff_used[i])",
+            )
+        end
+    end
+    n_converged = count(data.converged)
+    println("Converged points: $n_converged / $(length(data.omegas))")
+    println("Saved operating-point sweep CSV to: $output_path")
+    return output_path
+end
+
 function _main()
     settings = ArgParseSettings(
         prog="plot_compressor_operating_sweep.jl",
-        description="Solve and plot compressor operating sweep from a tabulated performance map file.",
+        description="Solve and plot compressor operating sweep from a compressor performance map file.",
     )
     @add_arg_table! settings begin
         "map_path"
@@ -304,15 +457,33 @@ function _main()
         "--output"
             help = "output plot path"
             arg_type = String
-            default = "compressor_operating_sweep.png"
+        "--csv"
+            help = "write CSV output instead of generating a plot"
+            action = :store_true
         "--map-group"
             help = "input map group/table"
             arg_type = String
-            default = "compressor_map"
-        "--tau-load"
-            help = "load torque (N*m)"
+        "--target-pr"
+            help = "target compressor pressure ratio Pt_out/Pt_in"
             arg_type = Float64
-            default = 1.2e6
+            default = 2.0
+        "--disable-pr-backoff"
+            help = "disable pt_out backoff when target PR solve fails"
+            action = :store_true
+        "--backoff-min-pt-out"
+            help = "minimum pt_out to consider in backoff search (Pa); default=pt_in"
+            arg_type = Float64
+        "--backoff-max-pt-out"
+            help = "maximum pt_out to consider in backoff search (Pa); default=pt_in*target_pr"
+            arg_type = Float64
+        "--backoff-pt-out-tol"
+            help = "pt_out tolerance for backoff bisection (Pa)"
+            arg_type = Float64
+            default = 50.0
+        "--backoff-max-iters"
+            help = "maximum bisection iterations for backoff"
+            arg_type = Int
+            default = 24
         "--omega-min"
             help = "minimum normalized shaft speed"
             arg_type = Float64
@@ -336,25 +507,44 @@ function _main()
     end
 
     parsed = parse_args(ARGS, settings)
-    map_group = something(_parsed_opt(parsed, "map_group", "map-group"), "compressor_map")
-    output = something(_parsed_opt(parsed, "output", "output"), "compressor_operating_sweep.png")
-    tau_load = something(_parsed_opt(parsed, "tau_load", "tau-load"), 1.2e6)
+    csv_mode = something(_parsed_opt(parsed, "csv", "csv"), false)
+    map_group = _parsed_opt(parsed, "map_group", "map-group")
+    output_default = csv_mode ? "compressor_operating_sweep.csv" : "compressor_operating_sweep.png"
+    output = something(_parsed_opt(parsed, "output", "output"), output_default)
+    target_pr = something(_parsed_opt(parsed, "target_pr", "target-pr"), 2.0)
+    pr_backoff = !something(_parsed_opt(parsed, "disable_pr_backoff", "disable-pr-backoff"), false)
+    backoff_min_pt_out = _parsed_opt(parsed, "backoff_min_pt_out", "backoff-min-pt-out")
+    backoff_max_pt_out = _parsed_opt(parsed, "backoff_max_pt_out", "backoff-max-pt-out")
+    backoff_pt_out_tol = something(_parsed_opt(parsed, "backoff_pt_out_tol", "backoff-pt-out-tol"), 50.0)
+    backoff_max_iters = something(_parsed_opt(parsed, "backoff_max_iters", "backoff-max-iters"), 24)
     omega_min = something(_parsed_opt(parsed, "omega_min", "omega-min"), 0.6)
     omega_max = something(_parsed_opt(parsed, "omega_max", "omega-max"), 1.0)
     n_points = something(_parsed_opt(parsed, "n_points", "n-points"), 25)
     pt_in = something(_parsed_opt(parsed, "pt_in", "pt-in"), 101_325.0)
     tt_in = something(_parsed_opt(parsed, "tt_in", "tt-in"), 288.15)
     map = _load_compressor_map(parsed["map_path"]; group=map_group)
-    plot_compressor_operating_sweep(
+    data = sweep_compressor_operating_points(
         map;
-        output_path=output,
-        tau_load=tau_load,
         omega_min=omega_min,
         omega_max=omega_max,
         n_points=n_points,
         pt_in=pt_in,
         Tt_in=tt_in,
+        target_pr=target_pr,
+        pr_backoff=pr_backoff,
+        backoff_min_pt_out=backoff_min_pt_out,
+        backoff_max_pt_out=backoff_max_pt_out,
+        backoff_pt_out_tol=backoff_pt_out_tol,
+        backoff_max_iters=backoff_max_iters,
     )
+    if csv_mode
+        write_compressor_operating_sweep_csv(data; output_path=output)
+    else
+        _plot_compressor_operating_sweep_data(
+            data;
+            output_path=output,
+        )
+    end
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__
