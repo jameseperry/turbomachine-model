@@ -77,8 +77,17 @@ const _ANALYTIC_MAP_FIELDS = fieldnames(AnalyticCompressorPerformanceMap{Float64
     end
 end
 
-@inline _analytic_smooth_saturate(x::T, k::T) where {T<:Real} =
-    x - _analytic_softplus(x - one(T), k) + _analytic_softplus(-x, k)
+@inline function _analytic_softplus(x::Real, k::Real)
+    T = promote_type(typeof(x), typeof(k))
+    return _analytic_softplus(T(x), T(k))
+end
+
+@inline function _analytic_smooth_saturate(x::Real, k::Real)
+    T = promote_type(typeof(x), typeof(k))
+    xT = T(x)
+    kT = T(k)
+    return xT - _analytic_softplus(xT - one(T), kT) + _analytic_softplus(-xT, kT)
+end
 
 @inline function mdot_surge(map::AnalyticCompressorPerformanceMap, omega_corr::Real)
     N = omega_corr
@@ -99,14 +108,19 @@ end
 )
     ms = mdot_surge(map, omega_corr)
     mc = mdot_choke(map, omega_corr)
-    denom = max(mc - ms, eps(promote_type(typeof(ms), typeof(mc), typeof(mdot_corr))))
+    delta_m = mc - ms
+    denom = abs(delta_m) > 1e-12 ? delta_m : oftype(delta_m, 1e-12)
     x = (mdot_corr - ms) / denom
     return _analytic_smooth_saturate(x, map.sat_k)
 end
 
-@inline function _beta_bump_raw(u::T, alpha::T, beta::T) where {T<:Real}
-    u_eps = clamp(u, T(1e-12), T(1 - 1e-12))
-    return u_eps^(alpha - one(T)) * (one(T) - u_eps)^(beta - one(T))
+@inline function _beta_bump_raw(u::Real, alpha::Real, beta::Real)
+    T = promote_type(typeof(u), typeof(alpha), typeof(beta))
+    uT = T(u)
+    alphaT = T(alpha)
+    betaT = T(beta)
+    u_eps = clamp(uT, T(1e-12), T(1 - 1e-12))
+    return u_eps^(alphaT - one(T)) * (one(T) - u_eps)^(betaT - one(T))
 end
 
 function _beta_bump_norm(map::AnalyticCompressorPerformanceMap{T}) where {T<:Real}
@@ -122,17 +136,21 @@ function _beta_bump_norm(map::AnalyticCompressorPerformanceMap{T}) where {T<:Rea
     return maximum(_beta_bump_raw(u, alpha, beta) for u in us)
 end
 
-@inline function _pr_shape(map::AnalyticCompressorPerformanceMap{T}, u::T) where {T<:Real}
-    bump = _beta_bump_raw(u, map.alpha, map.beta) / max(_beta_bump_norm(map), eps(T))
-    p_surge = one(T) - map.eps_s_pr * exp(-u / map.del_s_pr)
-    p_choke = one(T) - map.eps_c_pr * exp(-(one(T) - u) / map.del_c_pr)
+@inline function _pr_shape(map::AnalyticCompressorPerformanceMap{T}, u::Real) where {T<:Real}
+    U = promote_type(typeof(u), T)
+    uU = U(u)
+    bump = _beta_bump_raw(uU, U(map.alpha), U(map.beta)) /
+           max(U(_beta_bump_norm(map)), eps(U))
+    p_surge = one(U) - U(map.eps_s_pr) * exp(-uU / U(map.del_s_pr))
+    p_choke = one(U) - U(map.eps_c_pr) * exp(-(one(U) - uU) / U(map.del_c_pr))
     return bump * p_surge * p_choke
 end
 
 @inline function _pr_speed_scale(map::AnalyticCompressorPerformanceMap{T}, omega_corr::Real) where {T<:Real}
-    N = T(omega_corr)
-    N_pos = max(N, zero(T))
-    return map.Pi_max * (N_pos^map.pr_speed_exp)
+    U = promote_type(typeof(omega_corr), T)
+    N = U(omega_corr)
+    N_pos = max(N, zero(U))
+    return U(map.Pi_max) * (N_pos^U(map.pr_speed_exp))
 end
 
 """
@@ -147,20 +165,21 @@ function compressor_performance_map(
     omega_corr::Real,
     mdot_corr::Real,
 ) where {T<:Real}
-    N = T(omega_corr)
-    u = T(_normalized_flow_u(map, omega_corr, mdot_corr))
+    U = promote_type(typeof(omega_corr), typeof(mdot_corr), T)
+    N = U(omega_corr)
+    u = U(_normalized_flow_u(map, omega_corr, mdot_corr))
 
     Pi = _pr_speed_scale(map, omega_corr)
-    PR = one(T) + Pi * _pr_shape(map, u)
+    PR = one(U) + Pi * _pr_shape(map, u)
 
-    eta_peak = map.eta_max - map.eta_speed_quad * (N - one(T))^2
-    u_star = map.u0 + map.u1 * (N - one(T))
-    A = map.A0 * (one(T) + map.A_speed * (N - one(T))^2)
+    eta_peak = U(map.eta_max) - U(map.eta_speed_quad) * (N - one(U))^2
+    u_star = U(map.u0) + U(map.u1) * (N - one(U))
+    A = U(map.A0) * (one(U) + U(map.A_speed) * (N - one(U))^2)
 
     eta = eta_peak - A * (u - u_star)^2
-    eta -= map.Ds_eta * exp(-u / map.del_s_eta)
-    eta -= map.Dc_eta * exp(-(one(T) - u) / map.del_c_eta)
-    eta = clamp(eta, map.eta_min, map.eta_max_clip)
+    eta -= U(map.Ds_eta) * exp(-u / U(map.del_s_eta))
+    eta -= U(map.Dc_eta) * exp(-(one(U) - u) / U(map.del_c_eta))
+    eta = clamp(eta, U(map.eta_min), U(map.eta_max_clip))
 
     return (PR=PR, eta=eta)
 end
