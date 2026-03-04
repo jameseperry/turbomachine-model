@@ -12,12 +12,12 @@ This parametric model returns pressure ratio (`PR`) and adiabatic efficiency (`e
 as functions of physical shaft speed (`omega`, rad/s) and corrected mass flow.
 """
 Base.@kwdef struct AnalyticCompressorPerformanceMap{T<:Real} <: AbstractCompressorPerformanceMap
-    # Surge boundary: mdot_surge(N) = ms0 + ms1*(N-1) + ms2*(N-1)^2
+    # Surge boundary: _mdot_surge(N) = ms0 + ms1*(N-1) + ms2*(N-1)^2
     ms0::T = T(0.55)
     ms1::T = T(0.10)
     ms2::T = T(0.00)
 
-    # Choke boundary: mdot_choke(N) = mc0 + mc1*(N-1) + mc2*(N-1)^2
+    # Choke boundary: _mdot_choke(N) = mc0 + mc1*(N-1) + mc2*(N-1)^2
     mc0::T = T(1.10)
     mc1::T = T(0.12)
     mc2::T = T(0.00)
@@ -67,8 +67,22 @@ end
 
 const _ANALYTIC_MAP_FIELDS = fieldnames(AnalyticCompressorPerformanceMap{Float64})
 
-"""Analytic maps use physical shaft speed directly (`omega` in rad/s)."""
-corrected_speed(omega::Real, Tt_in::Real, map::AnalyticCompressorPerformanceMap) = omega
+"""Map-coordinate speed for analytic maps (physical omega)."""
+_map_speed_coordinate_from_stagnation(
+    map::AnalyticCompressorPerformanceMap,
+    omega::Real,
+    Tt_in::Real,
+    Pt_in::Real,
+) = omega
+
+"""Map-coordinate flow for analytic maps (`mdot_corr`)."""
+_map_flow_coordinate_from_stagnation(
+    map::AnalyticCompressorPerformanceMap,
+    omega::Real,
+    mdot::Real,
+    Tt_in::Real,
+    Pt_in::Real,
+) = mdot * sqrt(Tt_in / map.Tt_ref) / (Pt_in / map.Pt_ref)
 
 @inline function _omega_norm(map::AnalyticCompressorPerformanceMap{T}, omega::Real) where {T<:Real}
     U = promote_type(typeof(omega), T)
@@ -99,13 +113,13 @@ end
     return xT - _analytic_softplus(xT - one(T), kT) + _analytic_softplus(-xT, kT)
 end
 
-@inline function mdot_surge(map::AnalyticCompressorPerformanceMap, omega::Real)
+@inline function _mdot_surge(map::AnalyticCompressorPerformanceMap, omega::Real)
     N = _omega_norm(map, omega)
     d = N - one(N)
     return map.ms0 + map.ms1 * d + map.ms2 * d * d
 end
 
-@inline function mdot_choke(map::AnalyticCompressorPerformanceMap, omega::Real)
+@inline function _mdot_choke(map::AnalyticCompressorPerformanceMap, omega::Real)
     N = _omega_norm(map, omega)
     d = N - one(N)
     return map.mc0 + map.mc1 * d + map.mc2 * d * d
@@ -116,8 +130,8 @@ end
     omega::Real,
     mdot_corr::Real,
 )
-    ms = mdot_surge(map, omega)
-    mc = mdot_choke(map, omega)
+    ms = _mdot_surge(map, omega)
+    mc = _mdot_choke(map, omega)
     delta_m = mc - ms
     denom = abs(delta_m) > 1e-12 ? delta_m : oftype(delta_m, 1e-12)
     x = (mdot_corr - ms) / denom
@@ -170,7 +184,7 @@ Returns named tuple `(PR, eta)` where:
 - `PR` is total-pressure ratio (`Pt_out/Pt_in`)
 - `eta` is adiabatic efficiency
 """
-function compressor_performance_map(
+function _compressor_performance_map(
     map::AnalyticCompressorPerformanceMap{T},
     omega::Real,
     mdot_corr::Real,
@@ -194,21 +208,49 @@ function compressor_performance_map(
     return (PR=PR, eta=eta)
 end
 
-function performance_map_domain(map::AnalyticCompressorPerformanceMap)
+function compressor_performance_map_from_stagnation(
+    map::AnalyticCompressorPerformanceMap,
+    omega::Real,
+    mdot::Real,
+    Tt_in::Real,
+    Pt_in::Real,
+)
+    speed_coord = _map_speed_coordinate_from_stagnation(map, omega, Tt_in, Pt_in)
+    flow_coord = _map_flow_coordinate_from_stagnation(map, omega, mdot, Tt_in, Pt_in)
+    vals = _compressor_performance_map(map, speed_coord, flow_coord)
+    return (PR=vals.PR, eta=vals.eta, speed_coord=speed_coord, flow_coord=flow_coord)
+end
+
+function performance_map_domain(
+    map::AnalyticCompressorPerformanceMap,
+    Tt_in::Real,
+    Pt_in::Real,
+)
     omega_min = min(map.omega_norm_min, map.omega_norm_max) * map.omega_ref
     omega_max = max(map.omega_norm_min, map.omega_norm_max) * map.omega_ref
-    smin = mdot_surge(map, omega_min)
-    smax = mdot_surge(map, omega_max)
-    cmin = mdot_choke(map, omega_min)
-    cmax = mdot_choke(map, omega_max)
+    smin = _physical_mdot_from_map_flow_coordinate(map, omega_min, _mdot_surge(map, omega_min), Tt_in, Pt_in)
+    smax = _physical_mdot_from_map_flow_coordinate(map, omega_max, _mdot_surge(map, omega_max), Tt_in, Pt_in)
+    cmin = _physical_mdot_from_map_flow_coordinate(map, omega_min, _mdot_choke(map, omega_min), Tt_in, Pt_in)
+    cmax = _physical_mdot_from_map_flow_coordinate(map, omega_max, _mdot_choke(map, omega_max), Tt_in, Pt_in)
     return (
-        omega_corr=(omega_min, omega_max),
-        mdot_corr=(min(smin, smax), max(cmin, cmax)),
-        mdot_corr_flow_range=(
-            surge=(omega_corr -> mdot_surge(map, omega_corr)),
-            choke=(omega_corr -> mdot_choke(map, omega_corr)),
+        omega=(omega_min, omega_max),
+        mdot=(min(smin, smax), max(cmin, cmax)),
+        mdot_flow_range=(
+            surge=(omega -> _physical_mdot_from_map_flow_coordinate(map, omega, _mdot_surge(map, omega), Tt_in, Pt_in)),
+            choke=(omega -> _physical_mdot_from_map_flow_coordinate(map, omega, _mdot_choke(map, omega), Tt_in, Pt_in)),
         ),
     )
+end
+
+function _physical_mdot_from_map_flow_coordinate(
+    map::AnalyticCompressorPerformanceMap,
+    omega::Real,
+    map_flow::Real,
+    Tt_in::Real,
+    Pt_in::Real,
+)
+    mdot_corr = map_flow
+    return mdot_corr * (Pt_in / map.Pt_ref) / sqrt(Tt_in / map.Tt_ref)
 end
 
 function write_toml(

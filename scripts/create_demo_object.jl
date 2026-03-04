@@ -10,6 +10,8 @@ function _parse_object_type(raw::AbstractString)
     key = lowercase(strip(raw))
     if key in ("compressor_tabulated", "compressor")
         return :compressor_tabulated
+    elseif key in ("compressor_nondimensional_tabulated", "compressor_nondimensional", "compressor_nd")
+        return :compressor_nondimensional_tabulated
     elseif key in ("compressor_analytic", "analytic_compressor")
         return :compressor_analytic
     elseif key in ("compressor_spec", "spec")
@@ -20,12 +22,13 @@ function _parse_object_type(raw::AbstractString)
         return :turbine_tabulated
     end
     error(
-        "unsupported object_type=$(raw) (expected compressor_tabulated|compressor_analytic|compressor_spec|compressor_design|turbine_tabulated)",
+        "unsupported object_type=$(raw) (expected compressor_tabulated|compressor_nondimensional_tabulated|compressor_analytic|compressor_spec|compressor_design|turbine_tabulated)",
     )
 end
 
 function _default_group(object_type::Symbol)
     object_type == :compressor_tabulated && return "compressor_map"
+    object_type == :compressor_nondimensional_tabulated && return "compressor_map"
     object_type == :compressor_analytic && return "compressor_analytic_map"
     object_type == :compressor_spec && return "compressor_spec"
     object_type == :compressor_design && return "compressor_design"
@@ -36,6 +39,8 @@ end
 function _build_demo_object(object_type::Symbol, interpolation::Symbol)
     if object_type == :compressor_tabulated
         return Compressor.demo_tabulated_compressor_performance_map(; interpolation=interpolation)
+    elseif object_type == :compressor_nondimensional_tabulated
+        return Compressor.demo_nondimensional_tabulated_compressor_performance_map(; interpolation=interpolation)
     elseif object_type == :compressor_analytic
         return Compressor.demo_analytic_compressor_performance_map()
     elseif object_type == :compressor_spec
@@ -56,7 +61,7 @@ function _build_parser()
 
     @add_arg_table! settings begin
         "object_type"
-            help = "demo object type: compressor_tabulated, compressor_analytic, compressor_spec, compressor_design, or turbine_tabulated"
+            help = "demo object type: compressor_tabulated, compressor_nondimensional_tabulated, compressor_analytic, compressor_spec, compressor_design, or turbine_tabulated"
             required = true
         "output_path"
             help = "output TOML path"
@@ -86,7 +91,13 @@ function _main(args::Vector{String}=ARGS)
     group = isnothing(parsed["group"]) ? _default_group(object_type) : parsed["group"]
     obj = _build_demo_object(object_type, interpolation)
 
-    if object_type in (:compressor_tabulated, :compressor_analytic, :compressor_spec, :compressor_design)
+    if object_type in (
+        :compressor_tabulated,
+        :compressor_nondimensional_tabulated,
+        :compressor_analytic,
+        :compressor_spec,
+        :compressor_design,
+    )
         Compressor.write_toml(obj, output_path; group=group)
     elseif object_type == :turbine_tabulated
         Turbine.write_toml(obj, output_path; group=group)

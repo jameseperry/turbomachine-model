@@ -24,11 +24,7 @@ function _read_map(
     path::AbstractString,
     group::AbstractString,
 )
-    try
-        return Compressor.read_toml(Compressor.TabulatedCompressorPerformanceMap, path; group=group)
-    catch
-    end
-    return Compressor.read_toml(Compressor.AnalyticCompressorPerformanceMap, path; group=group)
+    return Compressor.read_performance_map_toml(path; group=group)
 end
 
 function _read_map(
@@ -156,8 +152,8 @@ function _plot_compressor_four_panel(
         mdot_eval,
         omega_eval,
         pr_eval;
-        xlabel="mdot_corr",
-        ylabel="omega_corr",
+        xlabel="mdot (kg/s)",
+        ylabel="omega (rad/s)",
         title="$(title_prefix): Pressure Ratio",
         colorbar_title="PR",
         linewidth=2,
@@ -170,8 +166,8 @@ function _plot_compressor_four_panel(
         mdot_eval,
         omega_eval,
         eta_eval;
-        xlabel="mdot_corr",
-        ylabel="omega_corr",
+        xlabel="mdot (kg/s)",
+        ylabel="omega (rad/s)",
         title="$(title_prefix): Isentropic Efficiency",
         colorbar_title="eta",
         linewidth=2,
@@ -188,7 +184,7 @@ function _plot_compressor_four_panel(
     end
 
     p_pr_vs_omega = plot(
-        xlabel="omega_corr",
+        xlabel="omega (rad/s)",
         ylabel="PR",
         title="$(title_prefix): PR vs omega (mdot contours)",
         left_margin=8mm,
@@ -197,7 +193,7 @@ function _plot_compressor_four_panel(
         top_margin=8mm,
     )
     p_eta_vs_omega = plot(
-        xlabel="omega_corr",
+        xlabel="omega (rad/s)",
         ylabel="eta",
         title="$(title_prefix): eta vs omega (mdot contours)",
         left_margin=8mm,
@@ -312,10 +308,6 @@ function _plot_turbine_four_panel(
 end
 
 _grid_points(::Compressor.AbstractCompressorPerformanceMap) = (Float64[], Float64[])
-_grid_points(map::Compressor.TabulatedCompressorPerformanceMap) = (
-    collect(Compressor.mdot_corr_grid(map)),
-    collect(Compressor.omega_corr_grid(map)),
-)
 
 _grid_points(::Turbine.AbstractTurbinePerformanceMap) = (Float64[], Float64[])
 _grid_points(map::Turbine.TabulatedTurbinePerformanceMap) = (
@@ -325,17 +317,19 @@ _grid_points(map::Turbine.TabulatedTurbinePerformanceMap) = (
 
 function _sample_compressor_map(
     map::Compressor.AbstractCompressorPerformanceMap,
+    Tt_in::Real,
+    Pt_in::Real,
     resolution::Int,
 )
     resolution >= 4 || error("resolution must be >= 4")
-    domain = Compressor.performance_map_domain(map)
-    omega_min, omega_max = domain.omega_corr
-    mdot_min, mdot_max = domain.mdot_corr
+    domain = Compressor.performance_map_domain(map, Tt_in, Pt_in)
+    omega_min, omega_max = domain.omega
+    mdot_min, mdot_max = domain.mdot
     omega_eval = collect(range(omega_min, omega_max, length=resolution))
     mdot_eval = collect(range(mdot_min, mdot_max, length=resolution))
     pr_eval = Matrix{Float64}(undef, length(omega_eval), length(mdot_eval))
     eta_eval = Matrix{Float64}(undef, length(omega_eval), length(mdot_eval))
-    flow_range = domain.mdot_corr_flow_range
+    flow_range = domain.mdot_flow_range
     for (i, omega) in pairs(omega_eval)
         m_surge = flow_range.surge(omega)
         m_choke = flow_range.choke(omega)
@@ -346,7 +340,7 @@ function _sample_compressor_map(
                 pr_eval[i, j] = NaN
                 eta_eval[i, j] = NaN
             else
-                vals = Compressor.compressor_performance_map(map, omega, mdot)
+                vals = Compressor.compressor_performance_map_from_stagnation(map, omega, mdot, Tt_in, Pt_in)
                 pr_eval[i, j] = vals.PR
                 eta_eval[i, j] = vals.eta
             end
@@ -358,9 +352,11 @@ end
 function plot_performance_map(
     map::Compressor.AbstractCompressorPerformanceMap;
     title_prefix::String="Compressor Map",
+    Tt_in::Real=288.15,
+    Pt_in::Real=101_325.0,
     resolution::Int=160,
 )
-    mdot_eval, omega_eval, pr_eval, eta_eval = _sample_compressor_map(map, resolution)
+    mdot_eval, omega_eval, pr_eval, eta_eval = _sample_compressor_map(map, Tt_in, Pt_in, resolution)
     mdot_points, omega_points = _grid_points(map)
     return _plot_compressor_four_panel(
         mdot_eval,
@@ -426,6 +422,14 @@ function _build_parser()
             help = "grid resolution for interpolated plotting"
             arg_type = Int
             default = 160
+        "--tt-in"
+            help = "inlet total temperature (K) for compressor physical-domain plotting"
+            arg_type = Float64
+            default = 288.15
+        "--pt-in"
+            help = "inlet total pressure (Pa) for compressor physical-domain plotting"
+            arg_type = Float64
+            default = 101_325.0
     end
     return settings
 end
@@ -443,11 +447,23 @@ function _main(args::Vector{String}=ARGS)
     title_prefix = something(_parsed_opt(parsed, "title_prefix", "title-prefix"), title_default)
     output_path = parsed["output"]
 
-    fig = plot_performance_map(
-        map;
-        title_prefix=title_prefix,
-        resolution=parsed["resolution"],
-    )
+    fig = if detected_kind == :compressor
+        tt_in = something(_parsed_opt(parsed, "tt_in", "tt-in"), 288.15)
+        pt_in = something(_parsed_opt(parsed, "pt_in", "pt-in"), 101_325.0)
+        plot_performance_map(
+            map;
+            title_prefix=title_prefix,
+            Tt_in=tt_in,
+            Pt_in=pt_in,
+            resolution=parsed["resolution"],
+        )
+    else
+        plot_performance_map(
+            map;
+            title_prefix=title_prefix,
+            resolution=parsed["resolution"],
+        )
+    end
     savefig(fig, output_path)
     println("Saved map plot to: $(output_path)")
 end

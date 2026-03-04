@@ -19,20 +19,7 @@ function _load_compressor_map(
     group::Union{Nothing,AbstractString}=nothing,
 )
     _infer_format(path)
-    groups = isnothing(group) ? ("compressor_map", "compressor_analytic_map") : (group,)
-    for g in groups
-        try
-            return TM.read_toml(TM.TabulatedCompressorPerformanceMap, path; group=g)
-        catch
-        end
-        try
-            return TM.read_toml(TM.AnalyticCompressorPerformanceMap, path; group=g)
-        catch
-        end
-    end
-    error(
-        "failed to load compressor map from $(path); expected tabulated group compressor_map or analytic group compressor_analytic_map",
-    )
+    return TM.read_performance_map_toml(path; group=group)
 end
 
 function _parsed_opt(parsed::Dict{String,Any}, primary::String, fallback::String)
@@ -368,8 +355,8 @@ function _main(args::Vector{String}=ARGS)
     branch_match_cost = something(_parsed_opt(parsed, "branch_match_cost", "branch-match-cost"), 0.5)
 
     map = _load_compressor_map(parsed["map_path"]; group=map_group)
-    domain = TM.performance_map_domain(map)
-    omega_default_min, omega_default_max = domain.omega_corr
+    domain = TM.performance_map_domain(map, tt_in, pt_in)
+    omega_default_min, omega_default_max = domain.omega
     omega_min = something(omega_min_arg, omega_default_min)
     omega_max = something(omega_max_arg, omega_default_max)
     data = TM.solve_compressor_operating_sweep(

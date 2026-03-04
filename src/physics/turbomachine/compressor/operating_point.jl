@@ -143,25 +143,26 @@ function _compressor_flow_bounds(
     map::AbstractCompressorPerformanceMap,
     omega::Float64,
     Tt_in::Float64,
+    Pt_in::Float64,
 )
-    domain = performance_map_domain(map)
-    omega_corr = corrected_speed(omega, Tt_in, map)
-    flow_range = domain.mdot_corr_flow_range
-    m_surge = flow_range.surge(omega_corr)
-    m_choke = flow_range.choke(omega_corr)
-    return (min(m_surge, m_choke), max(m_surge, m_choke), omega_corr)
+    domain = performance_map_domain(map, Tt_in, Pt_in)
+    flow_range = domain.mdot_flow_range
+    m_surge = flow_range.surge(omega)
+    m_choke = flow_range.choke(omega)
+    return (min(m_surge, m_choke), max(m_surge, m_choke))
 end
 
 """
-    compressor_pr_roots(map; omega, Tt_in, target_pr, n_scan=401, pr_tol=1e-8, prior_roots=[])
+    compressor_pr_roots(map; omega, Tt_in, Pt_in, target_pr, n_scan=401, pr_tol=1e-8, prior_roots=[])
 
-Find all corrected-flow roots at fixed speed where `PR(omega, mdot_corr) = target_pr`.
-Returns roots sorted by `mdot_corr` as `(mdot_corr, PR, eta)` tuples.
+Find all physical-flow roots at fixed speed where `PR(omega, mdot) = target_pr`.
+Returns roots sorted by `mdot` as `(mdot, PR, eta)` tuples.
 """
 function compressor_pr_roots(
     map::AbstractCompressorPerformanceMap;
     omega::Real,
     Tt_in::Real,
+    Pt_in::Real,
     target_pr::Real,
     n_scan::Int=401,
     pr_tol::Float64=1e-8,
@@ -171,14 +172,15 @@ function compressor_pr_roots(
     target_pr > 0.0 || error("target_pr must be > 0")
     omega_f = Float64(omega)
     Tt_in_f = Float64(Tt_in)
+    Pt_in_f = Float64(Pt_in)
     target_pr_f = Float64(target_pr)
 
-    m_lo, m_hi, omega_corr = _compressor_flow_bounds(map, omega_f, Tt_in_f)
-    f = mdot_corr -> begin
-        vals = compressor_performance_map(map, omega_corr, mdot_corr)
+    m_lo, m_hi = _compressor_flow_bounds(map, omega_f, Tt_in_f, Pt_in_f)
+    f = mdot -> begin
+        vals = compressor_performance_map_from_stagnation(map, omega_f, mdot, Tt_in_f, Pt_in_f)
         return vals.PR - target_pr_f
     end
-    roots_corr = bracket_bisect_roots(
+    roots_mdot = bracket_bisect_roots(
         f,
         (m_lo, m_hi);
         n_scan=n_scan,
@@ -187,9 +189,9 @@ function compressor_pr_roots(
     )
 
     roots = NamedTuple[]
-    for mdot_corr in roots_corr
-        vals = compressor_performance_map(map, omega_corr, mdot_corr)
-        push!(roots, (mdot_corr=mdot_corr, PR=vals.PR, eta=vals.eta))
+    for mdot in roots_mdot
+        vals = compressor_performance_map_from_stagnation(map, omega_f, mdot, Tt_in_f, Pt_in_f)
+        push!(roots, (mdot=mdot, PR=vals.PR, eta=vals.eta))
     end
     return roots
 end
@@ -218,6 +220,7 @@ function _compressor_pr_roots_with_backoff(
             map;
             omega=omega,
             Tt_in=Tt_in,
+            Pt_in=pt_in,
             target_pr=pr,
             prior_roots=prior_roots,
         )
@@ -258,14 +261,11 @@ end
 function _compressor_root_outputs(
     root::NamedTuple,
     eos::Fluids.AbstractEOS,
-    map::AbstractCompressorPerformanceMap,
     pt_in::Float64,
     ht_in::Float64,
-    Tt_in::Float64,
     omega::Float64,
 )
-    corr_to_phys_scale = (pt_in / map.Pt_ref) / sqrt(Tt_in / map.Tt_ref)
-    mdot = root.mdot_corr * corr_to_phys_scale
+    mdot = root.mdot
     pt_out = pt_in * root.PR
     eta_safe = max(root.eta, 1e-6)
     h2s = Fluids.isentropic_enthalpy(eos, pt_in, ht_in, pt_out)
@@ -352,7 +352,7 @@ function solve_compressor_operating_sweep(
 
             selected = _compressor_select_roots(found.roots, :all)
             for (k, root) in enumerate(selected)
-                out = _compressor_root_outputs(root, eos, map, pt_in_f, ht_in, Tt_in_f, omega)
+                out = _compressor_root_outputs(root, eos, pt_in_f, ht_in, omega)
                 push!(rows, (
                     omega=omega,
                     branch_id=k,
@@ -364,7 +364,7 @@ function solve_compressor_operating_sweep(
                     backoff_used=found.backoff_used,
                 ))
             end
-            prior_roots = [r.mdot_corr for r in found.roots]
+            prior_roots = [r.mdot for r in found.roots]
         end
         return (mode=:all, branch=:all, rows=rows)
     end
@@ -397,14 +397,14 @@ function solve_compressor_operating_sweep(
         end
 
         root = only(_compressor_select_roots(found.roots, branch))
-        out = _compressor_root_outputs(root, eos, map, pt_in_f, ht_in, Tt_in_f, omega)
+        out = _compressor_root_outputs(root, eos, pt_in_f, ht_in, omega)
         prs[i] = out.PR
         etas[i] = out.eta
         mdots[i] = out.mdot
         powers[i] = out.power
         converged[i] = true
         backoff_used[i] = found.backoff_used
-        prior_roots = [r.mdot_corr for r in found.roots]
+        prior_roots = [r.mdot for r in found.roots]
     end
 
     return (

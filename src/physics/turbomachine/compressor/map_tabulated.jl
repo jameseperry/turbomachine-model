@@ -1,5 +1,5 @@
 """
-Tabulated compressor performance map implementation.
+Tabulated compressor performance map implementation (dimensional/corrected-flow form).
 """
 
 using TOML
@@ -67,70 +67,92 @@ function TabulatedCompressorPerformanceMap(
     return TabulatedCompressorPerformanceMap(Float64(Tt_ref), Float64(Pt_ref), pr_map, eta_map)
 end
 
-omega_corr_grid(map::TabulatedCompressorPerformanceMap) = table_xgrid(map.pr_map)
-mdot_corr_grid(map::TabulatedCompressorPerformanceMap) = table_ygrid(map.pr_map)
-pr_table(map::TabulatedCompressorPerformanceMap) = table_values(map.pr_map)
-eta_table(map::TabulatedCompressorPerformanceMap) = table_values(map.eta_map)
-interpolation_kind(map::TabulatedCompressorPerformanceMap) = table_interpolation(map.pr_map)
-function performance_map_domain(map::TabulatedCompressorPerformanceMap)
-    mdot_lo = first(mdot_corr_grid(map))
-    mdot_hi = last(mdot_corr_grid(map))
-    return (
-        omega_corr=(first(omega_corr_grid(map)), last(omega_corr_grid(map))),
-        mdot_corr=(mdot_lo, mdot_hi),
-        mdot_corr_flow_range=(
-            surge=(omega_corr -> mdot_lo),
-            choke=(omega_corr -> mdot_hi),
-        ),
-    )
+_omega_corr_grid(map::TabulatedCompressorPerformanceMap) = table_xgrid(map.pr_map)
+_mdot_corr_grid(map::TabulatedCompressorPerformanceMap) = table_ygrid(map.pr_map)
+_pr_table(map::TabulatedCompressorPerformanceMap) = table_values(map.pr_map)
+_eta_table(map::TabulatedCompressorPerformanceMap) = table_values(map.eta_map)
+_interpolation_kind(map::TabulatedCompressorPerformanceMap) = table_interpolation(map.pr_map)
+
+"""Map-coordinate speed for tabulated corrected-flow maps (physical omega)."""
+_map_speed_coordinate_from_stagnation(
+    map::TabulatedCompressorPerformanceMap,
+    omega::Real,
+    Tt_in::Real,
+    Pt_in::Real,
+) = omega
+
+"""Map-coordinate flow for tabulated corrected-flow maps (mdot_corr)."""
+_map_flow_coordinate_from_stagnation(
+    map::TabulatedCompressorPerformanceMap,
+    omega::Real,
+    mdot::Real,
+    Tt_in::Real,
+    Pt_in::Real,
+) = mdot * sqrt(Tt_in / map.Tt_ref) / (Pt_in / map.Pt_ref)
+
+"""Physical mdot from map flow-coordinate for tabulated corrected-flow maps."""
+function _physical_mdot_from_map_flow_coordinate(
+    map::TabulatedCompressorPerformanceMap,
+    omega::Real,
+    map_flow::Real,
+    Tt_in::Real,
+    Pt_in::Real,
+)
+    mdot_corr = map_flow
+    return mdot_corr * (Pt_in / map.Pt_ref) / sqrt(Tt_in / map.Tt_ref)
 end
 
-"""Tabulated maps currently use physical shaft speed directly (omega in rad/s)."""
-corrected_speed(omega::Real, Tt_in::Real, Tt_ref::Real) = omega
-
-"""Corrected mass flow from physical flow and local total conditions."""
-corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, Tt_ref::Real, Pt_ref::Real) =
-    mdot * sqrt(Tt_in / Tt_ref) / (Pt_in / Pt_ref)
-
-corrected_speed(omega::Real, Tt_in::Real, map::TabulatedCompressorPerformanceMap) =
-    corrected_speed(omega, Tt_in, map.Tt_ref)
-
-corrected_flow(mdot::Real, Tt_in::Real, Pt_in::Real, map::AbstractCompressorPerformanceMap) =
-    corrected_flow(mdot, Tt_in, Pt_in, map.Tt_ref, map.Pt_ref)
-
-"""
-Evaluate a compressor map at corrected coordinates.
-
-Returns named tuple `(PR, eta)` where:
-- `PR` is total-pressure ratio (`Pt_out/Pt_in`)
-- `eta` is adiabatic efficiency
-"""
-function compressor_performance_map(
+"""Low-level map evaluation in map coordinates."""
+function _compressor_performance_map(
     map::TabulatedCompressorPerformanceMap,
-    omega_corr::Real,
-    mdot_corr::Real,
+    speed_coord::Real,
+    flow_coord::Real,
 )
-    PR = table_evaluate(map.pr_map, omega_corr, mdot_corr)
-    eta = table_evaluate(map.eta_map, omega_corr, mdot_corr)
+    PR = table_evaluate(map.pr_map, speed_coord, flow_coord)
+    eta = table_evaluate(map.eta_map, speed_coord, flow_coord)
     return (PR=PR, eta=eta)
 end
 
 """
 Evaluate a compressor map from physical values and local stagnation state.
 
-Returns `(omega_corr, mdot_corr, PR, eta)`.
+Returns `(PR, eta, speed_coord, flow_coord)`.
 """
 function compressor_performance_map_from_stagnation(
-    map::AbstractCompressorPerformanceMap,
+    map::TabulatedCompressorPerformanceMap,
     omega::Real,
     mdot::Real,
     Tt_in::Real,
     Pt_in::Real,
 )
-    omega_corr = corrected_speed(omega, Tt_in, map)
-    mdot_corr = corrected_flow(mdot, Tt_in, Pt_in, map)
-    vals = compressor_performance_map(map, omega_corr, mdot_corr)
-    return (omega_corr=omega_corr, mdot_corr=mdot_corr, PR=vals.PR, eta=vals.eta)
+    speed_coord = _map_speed_coordinate_from_stagnation(map, omega, Tt_in, Pt_in)
+    flow_coord = _map_flow_coordinate_from_stagnation(map, omega, mdot, Tt_in, Pt_in)
+    vals = _compressor_performance_map(map, speed_coord, flow_coord)
+    return (PR=vals.PR, eta=vals.eta, speed_coord=speed_coord, flow_coord=flow_coord)
+end
+
+"""
+Physical operating domain for a tabulated corrected-flow map at a given inlet state.
+"""
+function performance_map_domain(
+    map::TabulatedCompressorPerformanceMap,
+    Tt_in::Real,
+    Pt_in::Real,
+)
+    speed_lo = first(_omega_corr_grid(map))
+    speed_hi = last(_omega_corr_grid(map))
+    flow_lo = first(_mdot_corr_grid(map))
+    flow_hi = last(_mdot_corr_grid(map))
+    mdot_lo = _physical_mdot_from_map_flow_coordinate(map, speed_lo, flow_lo, Tt_in, Pt_in)
+    mdot_hi = _physical_mdot_from_map_flow_coordinate(map, speed_hi, flow_hi, Tt_in, Pt_in)
+    return (
+        omega=(speed_lo, speed_hi),
+        mdot=(min(mdot_lo, mdot_hi), max(mdot_lo, mdot_hi)),
+        mdot_flow_range=(
+            surge=(omega -> _physical_mdot_from_map_flow_coordinate(map, omega, flow_lo, Tt_in, Pt_in)),
+            choke=(omega -> _physical_mdot_from_map_flow_coordinate(map, omega, flow_hi, Tt_in, Pt_in)),
+        ),
+    )
 end
 
 function _table_to_rows(table::AbstractMatrix{<:Real})
