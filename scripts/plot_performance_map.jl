@@ -139,13 +139,100 @@ function _line_sample_indices(n::Int; n_lines::Int=10)
     return unique(round.(Int, range(1, n, length=k)))
 end
 
-function _plot_compressor_four_panel(
+function _finite_range(values)
+    finite = filter(isfinite, vec(values))
+    isempty(finite) && return (NaN, NaN)
+    return (minimum(finite), maximum(finite))
+end
+
+function _unique_sorted_pairs(xvals::AbstractVector{<:Real}, yvals::AbstractVector{<:Real})
+    n = length(xvals)
+    n == length(yvals) || error("xvals/yvals length mismatch")
+    n == 0 && return (Float64[], Float64[])
+
+    p = sortperm(xvals)
+    xs = Float64[xvals[i] for i in p]
+    ys = Float64[yvals[i] for i in p]
+
+    x_out = Float64[]
+    y_out = Float64[]
+    i = 1
+    while i <= n
+        x = xs[i]
+        j = i
+        y_sum = 0.0
+        c = 0
+        while j <= n && xs[j] == x
+            y_sum += ys[j]
+            c += 1
+            j += 1
+        end
+        push!(x_out, x)
+        push!(y_out, y_sum / c)
+        i = j
+    end
+    return (x_out, y_out)
+end
+
+function _interp_on_sorted_xy(xs::AbstractVector{<:Real}, ys::AbstractVector{<:Real}, x::Real)
+    n = length(xs)
+    n == length(ys) || error("xs/ys length mismatch")
+    n >= 2 || return NaN
+    x < xs[1] && return NaN
+    x > xs[end] && return NaN
+    i_hi = searchsortedfirst(xs, x)
+    i_hi <= 1 && return ys[1]
+    i_hi > n && return ys[end]
+    i_lo = i_hi - 1
+    xl = xs[i_lo]
+    xr = xs[i_hi]
+    yl = ys[i_lo]
+    yr = ys[i_hi]
+    xr == xl && return yl
+    t = (x - xl) / (xr - xl)
+    return (1 - t) * yl + t * yr
+end
+
+"""
+Row-wise invert a sampled map `target_matrix(omega_i, src_j)` to build
+`src(omega_i, target_k)` on a regular `(omega, target)` grid.
+"""
+function _rowwise_inverse_grid(
+    omega_eval::AbstractVector{<:Real},
+    src_eval::AbstractVector{<:Real},
+    target_matrix::AbstractMatrix{<:Real},
+    target_axis::AbstractVector{<:Real},
+)
+    size(target_matrix, 1) == length(omega_eval) || error("target_matrix row mismatch")
+    size(target_matrix, 2) == length(src_eval) || error("target_matrix column mismatch")
+
+    src_on_target = fill(NaN, length(omega_eval), length(target_axis))
+    for i in eachindex(omega_eval)
+        tgt_row = vec(target_matrix[i, :])
+        src_row = Float64.(src_eval)
+        mask = [isfinite(t) && isfinite(s) for (t, s) in zip(tgt_row, src_row)]
+        count(mask) >= 2 || continue
+
+        tgt_valid = Float64[tgt_row[k] for k in eachindex(tgt_row) if mask[k]]
+        src_valid = Float64[src_row[k] for k in eachindex(src_row) if mask[k]]
+        tgt_sorted, src_sorted = _unique_sorted_pairs(tgt_valid, src_valid)
+        length(tgt_sorted) >= 2 || continue
+
+        for (k, tgt) in pairs(target_axis)
+            src_on_target[i, k] = _interp_on_sorted_xy(tgt_sorted, src_sorted, tgt)
+        end
+    end
+    return src_on_target
+end
+
+function _plot_compressor_six_panel(
     mdot_eval::AbstractVector{<:Real},
     omega_eval::AbstractVector{<:Real},
     pr_eval::AbstractMatrix{<:Real},
     eta_eval::AbstractMatrix{<:Real},
     mdot_points::AbstractVector{<:Real},
-    omega_points::AbstractVector{<:Real};
+    omega_points::AbstractVector{<:Real},
+    boundary::NamedTuple;
     title_prefix::String,
 )
     p_pr = contour(
@@ -182,40 +269,142 @@ function _plot_compressor_four_panel(
         scatter!(p_pr, xpts, ypts; ms=2, label=false)
         scatter!(p_eta, xpts, ypts; ms=2, label=false)
     end
+    plot!(p_pr, boundary.mdot_surge, omega_eval; lw=2, ls=:dash, color=:black, label="surge")
+    plot!(p_pr, boundary.mdot_choke, omega_eval; lw=2, ls=:dot, color=:black, label="choke")
+    plot!(p_eta, boundary.mdot_surge, omega_eval; lw=2, ls=:dash, color=:black, label="surge")
+    plot!(p_eta, boundary.mdot_choke, omega_eval; lw=2, ls=:dot, color=:black, label="choke")
 
-    p_pr_vs_omega = plot(
-        xlabel="omega (rad/s)",
-        ylabel="PR",
-        title="$(title_prefix): PR vs omega (mdot contours)",
-        left_margin=8mm,
-        right_margin=10mm,
-        bottom_margin=8mm,
-        top_margin=8mm,
-    )
-    p_eta_vs_omega = plot(
-        xlabel="omega (rad/s)",
-        ylabel="eta",
-        title="$(title_prefix): eta vs omega (mdot contours)",
-        left_margin=8mm,
-        right_margin=10mm,
-        bottom_margin=8mm,
-        top_margin=8mm,
-    )
+    pr_lo, pr_hi = _finite_range(pr_eval)
+    eta_lo, eta_hi = _finite_range(eta_eval)
+    pr_axis =
+        (isfinite(pr_lo) && isfinite(pr_hi) && (pr_hi > pr_lo)) ?
+        collect(range(pr_lo, pr_hi, length=120)) : Float64[]
+    eta_axis =
+        (isfinite(eta_lo) && isfinite(eta_hi) && (eta_hi > eta_lo)) ?
+        collect(range(eta_lo, eta_hi, length=120)) : Float64[]
 
-    for j in _line_sample_indices(length(mdot_eval))
-        mdot = mdot_eval[j]
-        label = "mdot=$(round(mdot; sigdigits=4))"
-        plot!(p_pr_vs_omega, omega_eval, pr_eval[:, j]; lw=2, label=label)
-        plot!(p_eta_vs_omega, omega_eval, eta_eval[:, j]; lw=2, label=label)
-    end
+    mdot_on_pr = isempty(pr_axis) ? fill(NaN, length(omega_eval), 0) :
+                 _rowwise_inverse_grid(omega_eval, mdot_eval, pr_eval, pr_axis)
+    omega_on_pr = isempty(pr_axis) ? fill(NaN, length(mdot_eval), 0) :
+                  _rowwise_inverse_grid(mdot_eval, omega_eval, permutedims(pr_eval), pr_axis)
+
+    p_pr_vs_omega =
+        isempty(pr_axis) ? plot(
+            xlabel="omega (rad/s)",
+            ylabel="PR",
+            title="$(title_prefix): PR vs omega (mdot contours)",
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        ) : contour(
+            omega_eval,
+            pr_axis,
+            permutedims(mdot_on_pr);
+            xlabel="omega (rad/s)",
+            ylabel="PR",
+            title="$(title_prefix): PR vs omega (mdot contours)",
+            colorbar_title="mdot (kg/s)",
+            linewidth=2,
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        )
+    plot!(p_pr_vs_omega, omega_eval, boundary.pr_surge; lw=2, ls=:dash, color=:black, label="surge")
+    plot!(p_pr_vs_omega, omega_eval, boundary.pr_choke; lw=2, ls=:dot, color=:black, label="choke")
+
+    mdot_on_eta = isempty(eta_axis) ? fill(NaN, length(omega_eval), 0) :
+                  _rowwise_inverse_grid(omega_eval, mdot_eval, eta_eval, eta_axis)
+    p_eta_vs_omega =
+        isempty(eta_axis) ? plot(
+            xlabel="omega (rad/s)",
+            ylabel="eta",
+            title="$(title_prefix): eta vs omega (mdot contours)",
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        ) : contour(
+            omega_eval,
+            eta_axis,
+            permutedims(mdot_on_eta);
+            xlabel="omega (rad/s)",
+            ylabel="eta",
+            title="$(title_prefix): eta vs omega (mdot contours)",
+            colorbar_title="mdot (kg/s)",
+            linewidth=2,
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        )
+    plot!(p_eta_vs_omega, omega_eval, boundary.eta_surge; lw=2, ls=:dash, color=:black, label="surge")
+    plot!(p_eta_vs_omega, omega_eval, boundary.eta_choke; lw=2, ls=:dot, color=:black, label="choke")
+
+    p_mdot_vs_pr =
+        isempty(pr_axis) ? plot(
+            xlabel="PR",
+            ylabel="mdot (kg/s)",
+            title="$(title_prefix): mdot vs PR (omega contours)",
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        ) : contour(
+            pr_axis,
+            mdot_eval,
+            omega_on_pr;
+            xlabel="PR",
+            ylabel="mdot (kg/s)",
+            title="$(title_prefix): mdot vs PR (omega contours)",
+            colorbar_title="omega (rad/s)",
+            linewidth=2,
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        )
+    plot!(p_mdot_vs_pr, boundary.pr_surge, boundary.mdot_surge; lw=2, ls=:dash, color=:black, label="surge")
+    plot!(p_mdot_vs_pr, boundary.pr_choke, boundary.mdot_choke; lw=2, ls=:dot, color=:black, label="choke")
+
+    omega_on_eta = isempty(eta_axis) ? fill(NaN, length(mdot_eval), 0) :
+                   _rowwise_inverse_grid(mdot_eval, omega_eval, permutedims(eta_eval), eta_axis)
+    p_mdot_vs_eta =
+        isempty(eta_axis) ? plot(
+            xlabel="eta",
+            ylabel="mdot (kg/s)",
+            title="$(title_prefix): mdot vs eta (omega contours)",
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        ) : contour(
+            eta_axis,
+            mdot_eval,
+            omega_on_eta;
+            xlabel="eta",
+            ylabel="mdot (kg/s)",
+            title="$(title_prefix): mdot vs eta (omega contours)",
+            colorbar_title="omega (rad/s)",
+            linewidth=2,
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        )
+    plot!(p_mdot_vs_eta, boundary.eta_surge, boundary.mdot_surge; lw=2, ls=:dash, color=:black, label="surge")
+    plot!(p_mdot_vs_eta, boundary.eta_choke, boundary.mdot_choke; lw=2, ls=:dot, color=:black, label="choke")
 
     return plot(
         p_pr,
         p_eta,
         p_pr_vs_omega,
-        p_eta_vs_omega;
-        layout=(2, 2),
-        size=(1400, 1100),
+        p_eta_vs_omega,
+        p_mdot_vs_pr,
+        p_mdot_vs_eta;
+        layout=(3, 2),
+        size=(1500, 1600),
         left_margin=8mm,
         right_margin=10mm,
         bottom_margin=8mm,
@@ -267,31 +456,67 @@ function _plot_turbine_four_panel(
         scatter!(p_eta, xpts, ypts; ms=2, label=false)
     end
 
-    p_mdot_vs_omega = plot(
-        xlabel="omega_corr",
-        ylabel="mdot_corr",
-        title="$(title_prefix): mdot vs omega (PR contours)",
-        left_margin=8mm,
-        right_margin=10mm,
-        bottom_margin=8mm,
-        top_margin=8mm,
-    )
-    p_eta_vs_omega = plot(
-        xlabel="omega_corr",
-        ylabel="eta",
-        title="$(title_prefix): eta vs omega (PR contours)",
-        left_margin=8mm,
-        right_margin=10mm,
-        bottom_margin=8mm,
-        top_margin=8mm,
-    )
+    mdot_lo, mdot_hi = _finite_range(mdot_eval)
+    eta_lo, eta_hi = _finite_range(eta_eval)
+    mdot_axis =
+        (isfinite(mdot_lo) && isfinite(mdot_hi) && (mdot_hi > mdot_lo)) ?
+        collect(range(mdot_lo, mdot_hi, length=120)) : Float64[]
+    eta_axis =
+        (isfinite(eta_lo) && isfinite(eta_hi) && (eta_hi > eta_lo)) ?
+        collect(range(eta_lo, eta_hi, length=120)) : Float64[]
 
-    for j in _line_sample_indices(length(pr_eval))
-        pr = pr_eval[j]
-        label = "PR=$(round(pr; sigdigits=4))"
-        plot!(p_mdot_vs_omega, omega_eval, mdot_eval[:, j]; lw=2, label=label)
-        plot!(p_eta_vs_omega, omega_eval, eta_eval[:, j]; lw=2, label=label)
-    end
+    pr_on_mdot = isempty(mdot_axis) ? fill(NaN, length(omega_eval), 0) :
+                 _rowwise_inverse_grid(omega_eval, pr_eval, mdot_eval, mdot_axis)
+    pr_on_eta = isempty(eta_axis) ? fill(NaN, length(omega_eval), 0) :
+                _rowwise_inverse_grid(omega_eval, pr_eval, eta_eval, eta_axis)
+
+    p_mdot_vs_omega =
+        isempty(mdot_axis) ? plot(
+            xlabel="omega_corr",
+            ylabel="mdot_corr",
+            title="$(title_prefix): mdot vs omega (PR contours)",
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        ) : contour(
+            omega_eval,
+            mdot_axis,
+            permutedims(pr_on_mdot);
+            xlabel="omega_corr",
+            ylabel="mdot_corr",
+            title="$(title_prefix): mdot vs omega (PR contours)",
+            colorbar_title="PR_turb",
+            linewidth=2,
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        )
+
+    p_eta_vs_omega =
+        isempty(eta_axis) ? plot(
+            xlabel="omega_corr",
+            ylabel="eta",
+            title="$(title_prefix): eta vs omega (PR contours)",
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        ) : contour(
+            omega_eval,
+            eta_axis,
+            permutedims(pr_on_eta);
+            xlabel="omega_corr",
+            ylabel="eta",
+            title="$(title_prefix): eta vs omega (PR contours)",
+            colorbar_title="PR_turb",
+            linewidth=2,
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        )
 
     return plot(
         p_mdot,
@@ -324,15 +549,39 @@ function _sample_compressor_map(
     resolution >= 4 || error("resolution must be >= 4")
     domain = Compressor.performance_map_domain(map, Tt_in, Pt_in)
     omega_min, omega_max = domain.omega
-    mdot_min, mdot_max = domain.mdot
+    mdot_min_raw, mdot_max_raw = domain.mdot
+    mdot_min = max(0.0, min(mdot_min_raw, mdot_max_raw))
+    mdot_max = max(mdot_min, max(mdot_min_raw, mdot_max_raw))
     omega_eval = collect(range(omega_min, omega_max, length=resolution))
     mdot_eval = collect(range(mdot_min, mdot_max, length=resolution))
     pr_eval = Matrix{Float64}(undef, length(omega_eval), length(mdot_eval))
     eta_eval = Matrix{Float64}(undef, length(omega_eval), length(mdot_eval))
     flow_range = domain.mdot_flow_range
+    mdot_surge = Float64[]
+    mdot_choke = Float64[]
+    pr_surge = Float64[]
+    pr_choke = Float64[]
+    eta_surge = Float64[]
+    eta_choke = Float64[]
+
     for (i, omega) in pairs(omega_eval)
         m_surge = flow_range.surge(omega)
         m_choke = flow_range.choke(omega)
+        push!(mdot_surge, m_surge)
+        push!(mdot_choke, m_choke)
+        vals_surge = Compressor.compressor_performance_map_from_stagnation(map, omega, m_surge, Tt_in, Pt_in)
+        vals_choke = Compressor.compressor_performance_map_from_stagnation(map, omega, m_choke, Tt_in, Pt_in)
+        push!(pr_surge, isfinite(vals_surge.PR) ? vals_surge.PR : NaN)
+        push!(pr_choke, isfinite(vals_choke.PR) ? vals_choke.PR : NaN)
+        push!(
+            eta_surge,
+            (isfinite(vals_surge.eta) && vals_surge.eta > 0) ? vals_surge.eta : NaN,
+        )
+        push!(
+            eta_choke,
+            (isfinite(vals_choke.eta) && vals_choke.eta > 0) ? vals_choke.eta : NaN,
+        )
+
         m_lo = min(m_surge, m_choke)
         m_hi = max(m_surge, m_choke)
         for (j, mdot) in pairs(mdot_eval)
@@ -342,11 +591,24 @@ function _sample_compressor_map(
             else
                 vals = Compressor.compressor_performance_map_from_stagnation(map, omega, mdot, Tt_in, Pt_in)
                 pr_eval[i, j] = vals.PR
-                eta_eval[i, j] = vals.eta
+                eta_eval[i, j] = (isfinite(vals.eta) && vals.eta > 0) ? vals.eta : NaN
             end
         end
     end
-    return mdot_eval, omega_eval, pr_eval, eta_eval
+    return (
+        mdot_eval=mdot_eval,
+        omega_eval=omega_eval,
+        pr_eval=pr_eval,
+        eta_eval=eta_eval,
+        boundary=(
+            mdot_surge=mdot_surge,
+            mdot_choke=mdot_choke,
+            pr_surge=pr_surge,
+            pr_choke=pr_choke,
+            eta_surge=eta_surge,
+            eta_choke=eta_choke,
+        ),
+    )
 end
 
 function plot_performance_map(
@@ -356,15 +618,16 @@ function plot_performance_map(
     Pt_in::Real=101_325.0,
     resolution::Int=160,
 )
-    mdot_eval, omega_eval, pr_eval, eta_eval = _sample_compressor_map(map, Tt_in, Pt_in, resolution)
+    sampled = _sample_compressor_map(map, Tt_in, Pt_in, resolution)
     mdot_points, omega_points = _grid_points(map)
-    return _plot_compressor_four_panel(
-        mdot_eval,
-        omega_eval,
-        pr_eval,
-        eta_eval,
+    return _plot_compressor_six_panel(
+        sampled.mdot_eval,
+        sampled.omega_eval,
+        sampled.pr_eval,
+        sampled.eta_eval,
         mdot_points,
-        omega_points;
+        omega_points,
+        sampled.boundary;
         title_prefix=title_prefix,
     )
 end
@@ -381,7 +644,12 @@ function plot_performance_map(
     pr_eval = collect(range(pr_min, pr_max, length=resolution))
     omega_eval = collect(range(omega_min, omega_max, length=resolution))
     mdot_eval = [Turbine.turbine_performance_map(map, ω, pr).mdot_corr for ω in omega_eval, pr in pr_eval]
-    eta_eval = [Turbine.turbine_performance_map(map, ω, pr).eta for ω in omega_eval, pr in pr_eval]
+    eta_eval = [
+        begin
+            eta = Turbine.turbine_performance_map(map, ω, pr).eta
+            (isfinite(eta) && eta > 0) ? eta : NaN
+        end for ω in omega_eval, pr in pr_eval
+    ]
     pr_points, omega_points = _grid_points(map)
 
     return _plot_turbine_four_panel(

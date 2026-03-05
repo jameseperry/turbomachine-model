@@ -1,3 +1,4 @@
 *
 !.gitignore
-!Tupfile
+!Makefile
+!create_demo_sources.sh

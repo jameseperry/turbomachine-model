@@ -226,23 +226,62 @@ function write_compressor_operating_sweep_csv(
     data;
     output_path::AbstractString="compressor_operating_sweep.csv",
 )
+    diags = _diagnostics(data)
+    diag_by_omega = Dict{Float64,NamedTuple}()
+    for d in diags
+        diag_by_omega[Float64(d.omega)] = d
+    end
+
     open(output_path, "w") do io
-        println(io, "omega_rad_per_s,branch_id,PR,eta,mdot,power_kw,converged,backoff_used")
+        println(
+            io,
+            "omega_rad_per_s,branch_id,PR,eta,mdot,power_kw,converged,backoff_used,mdot_surge,mdot_choke,surge_margin_kg_per_s,choke_margin_kg_per_s,surge_margin_norm,choke_margin_norm,stall_flag,choke_flag,failure_reason,requested_pr,requested_pt_out_pa,achieved_pr,achieved_pt_out_pa,n_target_roots,n_achieved_roots,flow_mdot_min,flow_mdot_max",
+        )
         if data.mode == :single
             for i in eachindex(data.omegas)
                 branch_id = data.branch == :low ? 1 : 2
                 power_kw = data.powers[i] / 1_000.0
+                d = get(
+                    diag_by_omega,
+                    Float64(data.omegas[i]),
+                    (
+                        failure_reason="none",
+                        requested_pr=NaN,
+                        requested_pt_out=NaN,
+                        achieved_pr=NaN,
+                        achieved_pt_out=NaN,
+                        n_target_roots=0,
+                        n_achieved_roots=0,
+                        flow_mdot_min=NaN,
+                        flow_mdot_max=NaN,
+                    ),
+                )
                 println(
                     io,
-                    "$(data.omegas[i]),$branch_id,$(data.prs[i]),$(data.etas[i]),$(data.mdots[i]),$(power_kw),$(data.converged[i]),$(data.backoff_used[i])",
+                    "$(data.omegas[i]),$branch_id,$(data.prs[i]),$(data.etas[i]),$(data.mdots[i]),$(power_kw),$(data.converged[i]),$(data.backoff_used[i]),$(data.mdot_surge[i]),$(data.mdot_choke[i]),$(data.surge_margin[i]),$(data.choke_margin[i]),$(data.surge_margin_norm[i]),$(data.choke_margin_norm[i]),$(data.stall_flag[i]),$(data.choke_flag[i]),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max)",
                 )
             end
         else
             for r in data.rows
                 power_kw = r.power / 1_000.0
+                d = get(
+                    diag_by_omega,
+                    Float64(r.omega),
+                    (
+                        failure_reason="none",
+                        requested_pr=NaN,
+                        requested_pt_out=NaN,
+                        achieved_pr=NaN,
+                        achieved_pt_out=NaN,
+                        n_target_roots=0,
+                        n_achieved_roots=0,
+                        flow_mdot_min=NaN,
+                        flow_mdot_max=NaN,
+                    ),
+                )
                 println(
                     io,
-                    "$(r.omega),$(r.branch_id),$(r.PR),$(r.eta),$(r.mdot),$(power_kw),$(r.converged),$(r.backoff_used)",
+                    "$(r.omega),$(r.branch_id),$(r.PR),$(r.eta),$(r.mdot),$(power_kw),$(r.converged),$(r.backoff_used),$(r.mdot_surge),$(r.mdot_choke),$(r.surge_margin),$(r.choke_margin),$(r.surge_margin_norm),$(r.choke_margin_norm),$(r.stall_flag),$(r.choke_flag),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max)",
                 )
             end
         end
@@ -264,6 +303,22 @@ function write_compressor_operating_sweep_csv(
     return output_path
 end
 
+_diagnostics(data) = hasproperty(data, :diagnostics) ? data.diagnostics : NamedTuple[]
+
+function print_compressor_operating_sweep_failures(data)
+    diags = _diagnostics(data)
+    isempty(diags) && return
+    failures = filter(d -> !d.converged, diags)
+    isempty(failures) && return
+
+    println("Failed points diagnostics:")
+    for d in failures
+        println(
+            "  omega=$(d.omega) rad/s, reason=$(d.failure_reason), target_PR=$(d.requested_pr), achieved_PR=$(d.achieved_pr), backoff=$(d.backoff_used), roots(target/achieved)=$(d.n_target_roots)/$(d.n_achieved_roots), flow_bounds=[$(d.flow_mdot_min), $(d.flow_mdot_max)] kg/s",
+        )
+    end
+end
+
 function _main(args::Vector{String}=ARGS)
     settings = ArgParseSettings(
         prog="plot_compressor_operating_sweep.jl",
@@ -274,11 +329,11 @@ function _main(args::Vector{String}=ARGS)
             help = "input compressor performance map (.toml)"
             required = true
         "--output"
-            help = "output plot/csv path"
+            help = "output plot path"
             arg_type = String
         "--csv"
-            help = "write CSV output instead of generating a plot"
-            action = :store_true
+            help = "optional CSV output path"
+            arg_type = String
         "--map-group"
             help = "input map group/table"
             arg_type = String
@@ -316,7 +371,7 @@ function _main(args::Vector{String}=ARGS)
         "--n-points"
             help = "number of sweep points"
             arg_type = Int
-            default = 25
+            default = 75
         "--pt-in"
             help = "inlet total pressure (Pa)"
             arg_type = Float64
@@ -333,11 +388,11 @@ function _main(args::Vector{String}=ARGS)
 
     parsed = parse_args(args, settings)
 
-    csv_mode = something(_parsed_opt(parsed, "csv", "csv"), false)
+    csv_output = _parsed_opt(parsed, "csv", "csv")
     map_group = _parsed_opt(parsed, "map_group", "map-group")
     branch = _parse_branch(something(_parsed_opt(parsed, "branch", "branch"), "high"))
 
-    output_default = csv_mode ? "compressor_operating_sweep.csv" : "compressor_operating_sweep.png"
+    output_default = "compressor_operating_sweep.png"
     output = something(_parsed_opt(parsed, "output", "output"), output_default)
 
     target_pr = something(_parsed_opt(parsed, "target_pr", "target-pr"), 2.0)
@@ -349,7 +404,7 @@ function _main(args::Vector{String}=ARGS)
 
     omega_min_arg = _parsed_opt(parsed, "omega_min", "omega-min")
     omega_max_arg = _parsed_opt(parsed, "omega_max", "omega-max")
-    n_points = something(_parsed_opt(parsed, "n_points", "n-points"), 25)
+    n_points = something(_parsed_opt(parsed, "n_points", "n-points"), 75)
     pt_in = something(_parsed_opt(parsed, "pt_in", "pt-in"), 101_325.0)
     tt_in = something(_parsed_opt(parsed, "tt_in", "tt-in"), 288.15)
     branch_match_cost = something(_parsed_opt(parsed, "branch_match_cost", "branch-match-cost"), 0.5)
@@ -375,15 +430,17 @@ function _main(args::Vector{String}=ARGS)
         backoff_max_iters=backoff_max_iters,
     )
 
-    if csv_mode
-        write_compressor_operating_sweep_csv(data; output_path=output)
-    else
-        _plot_compressor_operating_sweep_data(
-            data;
-            output_path=output,
-            branch_match_cost=branch_match_cost,
-        )
+    _plot_compressor_operating_sweep_data(
+        data;
+        output_path=output,
+        branch_match_cost=branch_match_cost,
+    )
+
+    if !isnothing(csv_output)
+        write_compressor_operating_sweep_csv(data; output_path=csv_output)
     end
+
+    print_compressor_operating_sweep_failures(data)
 end
 
 if abspath(PROGRAM_FILE) == @__FILE__

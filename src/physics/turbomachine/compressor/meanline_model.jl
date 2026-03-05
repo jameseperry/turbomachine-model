@@ -12,6 +12,9 @@ abstract type AbstractRowAeroModel end
 
 """
 Simple rotor aerodynamic closure.
+
+Parameter definitions and tuning notes:
+`docs/compressor_meanline_row_aero_parameters.md`
 """
 Base.@kwdef struct RotorAeroModel{T<:Real} <: AbstractRowAeroModel
     beta_ref::T = T(-0.55)                  # reference relative inlet angle [rad]
@@ -25,6 +28,9 @@ end
 
 """
 Simple stator aerodynamic closure.
+
+Parameter definitions and tuning notes:
+`docs/compressor_meanline_row_aero_parameters.md`
 """
 Base.@kwdef struct StatorAeroModel{T<:Real} <: AbstractRowAeroModel
     alpha_ref::T = T(0.45)                   # reference absolute inlet angle [rad]
@@ -480,8 +486,11 @@ function _meanline_performance_map(
 
     tau_out = tau[end]
     pi_out = pi[end]
-    eta_tt = if tau_out > 1
-        (pi_out^((model.gamma - 1) / model.gamma) - 1) / (tau_out - 1)
+    # Allow both compressor mode (PR > 1) and windmilling mode (PR <= 1).
+    # eta_tt is evaluated whenever mathematically well-defined.
+    eta_tt = if (tau_out > 0) && (pi_out > 0) && (abs(tau_out - 1) > 1e-12)
+        eta = (pi_out^((model.gamma - 1) / model.gamma) - 1) / (tau_out - 1)
+        isfinite(eta) ? eta : NaN
     else
         NaN
     end
@@ -490,7 +499,7 @@ function _meanline_performance_map(
         eta=eta_tt,
         stall=model_stall,
         choke=model_choke,
-        valid=model_valid && isfinite(eta_tt),
+        valid=model_valid && isfinite(pi_out) && (pi_out > 0) && isfinite(eta_tt),
         mu=mu,
         tau=tau,
         pi=pi,
@@ -635,9 +644,10 @@ function tabulate_compressor_meanline_model(
     end
 
     phi_probe = collect(range(phi_lo, phi_hi, length=boundary_resolution))
+    valid_speed_idx = Int[]
     phi_surge = Float64[]
     phi_choke = Float64[]
-    for m_tip in m_grid
+    for (i, m_tip) in pairs(m_grid)
         valid_phis = Float64[]
         for phi in phi_probe
             vals = eval_at(m_tip, phi)
@@ -645,19 +655,22 @@ function tabulate_compressor_meanline_model(
                 push!(valid_phis, phi)
             end
         end
-        isempty(valid_phis) &&
-            error("no valid phi range found for m_tip=$(m_tip); meanline model not tabulatable on requested domain")
+        isempty(valid_phis) && continue
+        push!(valid_speed_idx, i)
         push!(phi_surge, first(valid_phis))
         push!(phi_choke, last(valid_phis))
     end
+    length(valid_speed_idx) >= 2 ||
+        error("meanline model has fewer than two valid speed lines in requested tabulation range")
+    m_grid_valid = m_grid[valid_speed_idx]
 
-    pr_table = Matrix{Float64}(undef, length(m_grid), length(phi_grid))
-    eta_table = Matrix{Float64}(undef, length(m_grid), length(phi_grid))
-    for (i, m_tip) in pairs(m_grid)
+    pr_table = Matrix{Float64}(undef, length(m_grid_valid), length(phi_grid))
+    eta_table = Matrix{Float64}(undef, length(m_grid_valid), length(phi_grid))
+    for (i, m_tip) in pairs(m_grid_valid)
         for (j, phi_raw) in pairs(phi_grid)
             phi = clamp(phi_raw, phi_surge[i], phi_choke[i])
             vals = eval_at(m_tip, phi)
-            (isfinite(vals.PR) && isfinite(vals.eta)) ||
+            (vals.valid && isfinite(vals.PR) && isfinite(vals.eta)) ||
                 error("meanline tabulation produced non-finite value at m_tip=$(m_tip), phi=$(phi)")
             pr_table[i, j] = vals.PR
             eta_table[i, j] = vals.eta
@@ -674,7 +687,7 @@ function tabulate_compressor_meanline_model(
         tip_radius_inlet,
         mean_radius_inlet,
         inlet_area,
-        m_grid,
+        m_grid_valid,
         phi_grid,
         pr_table,
         eta_table;
@@ -818,24 +831,66 @@ Demo compressor meanline model for development/testing.
 """
 function demo_compressor_meanline_model()
     rows = CompressorRow[
-        CompressorRow(:rotor, RotorAeroModel{Float64}(), 0.180, 0.220, +1),
-        CompressorRow(:stator, StatorAeroModel{Float64}(), 0.180, 0.220, 0),
         CompressorRow(
             :rotor,
             RotorAeroModel{Float64}(
-                beta_ref=-0.50,
-                beta_incidence_sensitivity=0.70,
-                loss_base=0.011,
-                loss_incidence=0.20,
-                stall_incidence_limit=0.30,
-                k_theta_min=-2.6,
-                k_theta_max=1.4,
+                beta_ref=-0.55,
+                beta_incidence_sensitivity=0.62,
+                loss_base=0.0025,
+                loss_incidence=0.045,
+                stall_incidence_limit=0.36,
+                k_theta_min=-2.0,
+                k_theta_max=1.1,
             ),
             0.180,
             0.220,
             +1,
         ),
-        CompressorRow(:stator, StatorAeroModel{Float64}(), 0.180, 0.220, 0),
+        CompressorRow(
+            :stator,
+            StatorAeroModel{Float64}(
+                alpha_ref=0.45,
+                alpha_incidence_sensitivity=0.70,
+                loss_base=0.0018,
+                loss_incidence=0.030,
+                stall_incidence_limit=0.34,
+                k_theta_min=-1.0,
+                k_theta_max=2.0,
+            ),
+            0.180,
+            0.220,
+            0,
+        ),
+        CompressorRow(
+            :rotor,
+            RotorAeroModel{Float64}(
+                beta_ref=-0.50,
+                beta_incidence_sensitivity=0.60,
+                loss_base=0.0030,
+                loss_incidence=0.050,
+                stall_incidence_limit=0.34,
+                k_theta_min=-2.1,
+                k_theta_max=1.1,
+            ),
+            0.180,
+            0.220,
+            +1,
+        ),
+        CompressorRow(
+            :stator,
+            StatorAeroModel{Float64}(
+                alpha_ref=0.45,
+                alpha_incidence_sensitivity=0.70,
+                loss_base=0.0020,
+                loss_incidence=0.032,
+                stall_incidence_limit=0.34,
+                k_theta_min=-1.0,
+                k_theta_max=2.0,
+            ),
+            0.180,
+            0.220,
+            0,
+        ),
     ]
     return CompressorMeanlineModel(
         1.4,
@@ -844,7 +899,7 @@ function demo_compressor_meanline_model()
         [1.00, 0.98, 0.96, 0.95, 0.95],
         rows,
         0.0,
-        (0.45, 1.10),
-        (0.25, 0.95),
+        (0.01, 1.10),
+        (0.01, 0.95),
     )
 end

@@ -212,7 +212,17 @@ function _compressor_pr_roots_with_backoff(
     target_pt_out = pt_in * target_pr
     lo_pt = max(min_pt_out, pt_in)
     hi_pt = min(max_pt_out, target_pt_out)
-    lo_pt <= hi_pt || return (roots=NamedTuple[], PR=NaN, backoff_used=false, converged=false)
+    lo_pt <= hi_pt || return (
+        roots=NamedTuple[],
+        PR=NaN,
+        pt_out=NaN,
+        backoff_used=false,
+        converged=false,
+        target_pr=target_pr,
+        target_pt_out=target_pt_out,
+        n_target_roots=0,
+        failure_reason=:invalid_backoff_range,
+    )
 
     evaluate_at_pt = pt -> begin
         pr = pt / pt_in
@@ -226,6 +236,33 @@ function _compressor_pr_roots_with_backoff(
         )
     end
 
+    roots_hi = evaluate_at_pt(hi_pt)
+    if !isempty(roots_hi)
+        return (
+            roots=roots_hi,
+            PR=(hi_pt / pt_in),
+            pt_out=hi_pt,
+            backoff_used=(hi_pt < target_pt_out),
+            converged=true,
+            target_pr=target_pr,
+            target_pt_out=target_pt_out,
+            n_target_roots=length(roots_hi),
+            failure_reason=:none,
+        )
+    end
+
+    enabled || return (
+        roots=NamedTuple[],
+        PR=NaN,
+        pt_out=NaN,
+        backoff_used=false,
+        converged=false,
+        target_pr=target_pr,
+        target_pt_out=target_pt_out,
+        n_target_roots=length(roots_hi),
+        failure_reason=:target_infeasible_backoff_disabled,
+    )
+
     backoff = feasibility_backoff(
         evaluate_at_pt,
         target_pt_out;
@@ -238,12 +275,27 @@ function _compressor_pr_roots_with_backoff(
         is_feasible=(roots -> !isempty(roots)),
     )
 
-    backoff.converged || return (roots=NamedTuple[], PR=NaN, backoff_used=false, converged=false)
+    backoff.converged || return (
+        roots=NamedTuple[],
+        PR=NaN,
+        pt_out=NaN,
+        backoff_used=false,
+        converged=false,
+        target_pr=target_pr,
+        target_pt_out=target_pt_out,
+        n_target_roots=length(roots_hi),
+        failure_reason=:no_feasible_backoff_solution,
+    )
     return (
         roots=backoff.result,
         PR=(backoff.value / pt_in),
+        pt_out=backoff.value,
         backoff_used=backoff.used_backoff,
         converged=true,
+        target_pr=target_pr,
+        target_pt_out=target_pt_out,
+        n_target_roots=length(roots_hi),
+        failure_reason=:none,
     )
 end
 
@@ -258,12 +310,45 @@ function _compressor_select_roots(roots::Vector{NamedTuple}, branch::Symbol)
     end
 end
 
+function _compressor_operating_margins(
+    map::AbstractCompressorPerformanceMap,
+    omega::Float64,
+    mdot::Float64,
+    Tt_in::Float64,
+    pt_in::Float64,
+)
+    domain = performance_map_domain(map, Tt_in, pt_in)
+    flow_range = domain.mdot_flow_range
+    mdot_surge = flow_range.surge(omega)
+    mdot_choke = flow_range.choke(omega)
+    span = max(abs(mdot_choke - mdot_surge), 1e-12)
+    surge_margin = mdot - mdot_surge
+    choke_margin = mdot_choke - mdot
+
+    map_vals = compressor_performance_map_from_stagnation(map, omega, mdot, Tt_in, pt_in)
+    stall_flag = hasproperty(map_vals, :stall) ? Bool(map_vals.stall) : false
+    choke_flag = hasproperty(map_vals, :choke) ? Bool(map_vals.choke) : false
+
+    return (
+        mdot_surge=mdot_surge,
+        mdot_choke=mdot_choke,
+        surge_margin=surge_margin,
+        choke_margin=choke_margin,
+        surge_margin_norm=surge_margin / span,
+        choke_margin_norm=choke_margin / span,
+        stall_flag=stall_flag,
+        choke_flag=choke_flag,
+    )
+end
+
 function _compressor_root_outputs(
     root::NamedTuple,
     eos::Fluids.AbstractEOS,
+    map::AbstractCompressorPerformanceMap,
     pt_in::Float64,
     ht_in::Float64,
     omega::Float64,
+    Tt_in::Float64,
 )
     mdot = root.mdot
     pt_out = pt_in * root.PR
@@ -272,7 +357,23 @@ function _compressor_root_outputs(
     ht_out = ht_in + (h2s - ht_in) / eta_safe
     tau = mdot * (ht_out - ht_in) / max(omega, 1e-12)
     power = tau * omega
-    return (PR=root.PR, eta=root.eta, mdot=mdot, ht_out=ht_out, tau=tau, power=power)
+    margins = _compressor_operating_margins(map, omega, mdot, Tt_in, pt_in)
+    return (
+        PR=root.PR,
+        eta=root.eta,
+        mdot=mdot,
+        ht_out=ht_out,
+        tau=tau,
+        power=power,
+        mdot_surge=margins.mdot_surge,
+        mdot_choke=margins.mdot_choke,
+        surge_margin=margins.surge_margin,
+        choke_margin=margins.choke_margin,
+        surge_margin_norm=margins.surge_margin_norm,
+        choke_margin_norm=margins.choke_margin_norm,
+        stall_flag=margins.stall_flag,
+        choke_flag=margins.choke_flag,
+    )
 end
 
 """
@@ -293,7 +394,7 @@ function solve_compressor_operating_sweep(
     eos::Fluids.AbstractEOS;
     omega_min::Real=0.6,
     omega_max::Real=1.0,
-    n_points::Int=25,
+    n_points::Int=75,
     pt_in::Real=101_325.0,
     Tt_in::Real=288.15,
     target_pr::Real=2.0,
@@ -320,8 +421,10 @@ function solve_compressor_operating_sweep(
 
     if branch == :all
         rows = NamedTuple[]
+        diagnostics = NamedTuple[]
         prior_roots = Float64[]
         for omega in omegas
+            flow_lo, flow_hi = _compressor_flow_bounds(map, omega, Tt_in_f, pt_in_f)
             found = _compressor_pr_roots_with_backoff(
                 map,
                 omega,
@@ -336,6 +439,24 @@ function solve_compressor_operating_sweep(
                 prior_roots=prior_roots,
             )
 
+            push!(
+                diagnostics,
+                (
+                    omega=omega,
+                    converged=(found.converged && !isempty(found.roots)),
+                    failure_reason=String(found.failure_reason),
+                    backoff_used=found.backoff_used,
+                    requested_pr=found.target_pr,
+                    requested_pt_out=found.target_pt_out,
+                    achieved_pr=found.PR,
+                    achieved_pt_out=found.pt_out,
+                    n_target_roots=found.n_target_roots,
+                    n_achieved_roots=length(found.roots),
+                    flow_mdot_min=flow_lo,
+                    flow_mdot_max=flow_hi,
+                ),
+            )
+
             if !found.converged || isempty(found.roots)
                 push!(rows, (
                     omega=omega,
@@ -346,13 +467,21 @@ function solve_compressor_operating_sweep(
                     power=NaN,
                     converged=false,
                     backoff_used=false,
+                    mdot_surge=NaN,
+                    mdot_choke=NaN,
+                    surge_margin=NaN,
+                    choke_margin=NaN,
+                    surge_margin_norm=NaN,
+                    choke_margin_norm=NaN,
+                    stall_flag=false,
+                    choke_flag=false,
                 ))
                 continue
             end
 
             selected = _compressor_select_roots(found.roots, :all)
             for (k, root) in enumerate(selected)
-                out = _compressor_root_outputs(root, eos, pt_in_f, ht_in, omega)
+                out = _compressor_root_outputs(root, eos, map, pt_in_f, ht_in, omega, Tt_in_f)
                 push!(rows, (
                     omega=omega,
                     branch_id=k,
@@ -362,11 +491,19 @@ function solve_compressor_operating_sweep(
                     power=out.power,
                     converged=true,
                     backoff_used=found.backoff_used,
+                    mdot_surge=out.mdot_surge,
+                    mdot_choke=out.mdot_choke,
+                    surge_margin=out.surge_margin,
+                    choke_margin=out.choke_margin,
+                    surge_margin_norm=out.surge_margin_norm,
+                    choke_margin_norm=out.choke_margin_norm,
+                    stall_flag=out.stall_flag,
+                    choke_flag=out.choke_flag,
                 ))
             end
             prior_roots = [r.mdot for r in found.roots]
         end
-        return (mode=:all, branch=:all, rows=rows)
+        return (mode=:all, branch=:all, rows=rows, diagnostics=diagnostics)
     end
 
     prs = fill(NaN, n_points)
@@ -375,9 +512,19 @@ function solve_compressor_operating_sweep(
     powers = fill(NaN, n_points)
     converged = fill(false, n_points)
     backoff_used = fill(false, n_points)
+    mdot_surge = fill(NaN, n_points)
+    mdot_choke = fill(NaN, n_points)
+    surge_margin = fill(NaN, n_points)
+    choke_margin = fill(NaN, n_points)
+    surge_margin_norm = fill(NaN, n_points)
+    choke_margin_norm = fill(NaN, n_points)
+    stall_flag = fill(false, n_points)
+    choke_flag = fill(false, n_points)
+    diagnostics = NamedTuple[]
     prior_roots = Float64[]
 
     for (i, omega) in enumerate(omegas)
+        flow_lo, flow_hi = _compressor_flow_bounds(map, omega, Tt_in_f, pt_in_f)
         found = _compressor_pr_roots_with_backoff(
             map,
             omega,
@@ -392,18 +539,44 @@ function solve_compressor_operating_sweep(
             prior_roots=prior_roots,
         )
 
+        push!(
+            diagnostics,
+            (
+                omega=omega,
+                converged=(found.converged && !isempty(found.roots)),
+                failure_reason=String(found.failure_reason),
+                backoff_used=found.backoff_used,
+                requested_pr=found.target_pr,
+                requested_pt_out=found.target_pt_out,
+                achieved_pr=found.PR,
+                achieved_pt_out=found.pt_out,
+                n_target_roots=found.n_target_roots,
+                n_achieved_roots=length(found.roots),
+                flow_mdot_min=flow_lo,
+                flow_mdot_max=flow_hi,
+            ),
+        )
+
         if !found.converged || isempty(found.roots)
             continue
         end
 
         root = only(_compressor_select_roots(found.roots, branch))
-        out = _compressor_root_outputs(root, eos, pt_in_f, ht_in, omega)
+        out = _compressor_root_outputs(root, eos, map, pt_in_f, ht_in, omega, Tt_in_f)
         prs[i] = out.PR
         etas[i] = out.eta
         mdots[i] = out.mdot
         powers[i] = out.power
         converged[i] = true
         backoff_used[i] = found.backoff_used
+        mdot_surge[i] = out.mdot_surge
+        mdot_choke[i] = out.mdot_choke
+        surge_margin[i] = out.surge_margin
+        choke_margin[i] = out.choke_margin
+        surge_margin_norm[i] = out.surge_margin_norm
+        choke_margin_norm[i] = out.choke_margin_norm
+        stall_flag[i] = out.stall_flag
+        choke_flag[i] = out.choke_flag
         prior_roots = [r.mdot for r in found.roots]
     end
 
@@ -417,6 +590,15 @@ function solve_compressor_operating_sweep(
         powers=powers,
         converged=converged,
         backoff_used=backoff_used,
+        mdot_surge=mdot_surge,
+        mdot_choke=mdot_choke,
+        surge_margin=surge_margin,
+        choke_margin=choke_margin,
+        surge_margin_norm=surge_margin_norm,
+        choke_margin_norm=choke_margin_norm,
+        stall_flag=stall_flag,
+        choke_flag=choke_flag,
+        diagnostics=diagnostics,
     )
 end
 

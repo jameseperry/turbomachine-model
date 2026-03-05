@@ -7,9 +7,6 @@
 /logs/
 /manifest/
 
-# Tup
-.tup/
-
 # Environments
 Manifest.toml
 
