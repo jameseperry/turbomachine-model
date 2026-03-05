@@ -62,7 +62,7 @@ function compressor_residuals(
     tau::Real,
 )
     Tt_in = Fluids.temperature(eos, pt_in, ht_in)
-    map_vals = compressor_performance_map_from_stagnation(
+    map_vals = performance_from_stagnation(
         compressor_map,
         omega,
         mdot,

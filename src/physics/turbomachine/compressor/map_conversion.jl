@@ -78,7 +78,7 @@ function to_nondimensional_tabulated_compressor_map(
         omega = omega_from_m(m_tip)
         for (j, phi) in pairs(phi_grid)
             mdot = Float64(phi) * rho0_ref * Float64(inlet_area) * omega * Float64(mean_radius_inlet)
-            vals = compressor_performance_map_from_stagnation(map, omega, mdot, Tt_in_ref, Pt_in_ref)
+            vals = performance_from_stagnation(map, omega, mdot, Tt_in_ref, Pt_in_ref)
             pr[i, j] = vals.PR
             eta[i, j] = vals.eta
         end
@@ -173,7 +173,7 @@ function to_tabulated_compressor_map(
     for (i, omega) in pairs(omega_grid)
         for (j, map_flow) in pairs(mdot_grid)
             mdot = Float64(map_flow) / corr_fac
-            vals = compressor_performance_map_from_stagnation(map, omega, mdot, Tt_in_ref, Pt_in_ref)
+            vals = performance_from_stagnation(map, omega, mdot, Tt_in_ref, Pt_in_ref)
             pr[i, j] = vals.PR
             eta[i, j] = vals.eta
         end

@@ -569,8 +569,8 @@ function _sample_compressor_map(
         m_choke = flow_range.choke(omega)
         push!(mdot_surge, m_surge)
         push!(mdot_choke, m_choke)
-        vals_surge = Compressor.compressor_performance_map_from_stagnation(map, omega, m_surge, Tt_in, Pt_in)
-        vals_choke = Compressor.compressor_performance_map_from_stagnation(map, omega, m_choke, Tt_in, Pt_in)
+        vals_surge = Compressor.performance_from_stagnation(map, omega, m_surge, Tt_in, Pt_in)
+        vals_choke = Compressor.performance_from_stagnation(map, omega, m_choke, Tt_in, Pt_in)
         push!(pr_surge, isfinite(vals_surge.PR) ? vals_surge.PR : NaN)
         push!(pr_choke, isfinite(vals_choke.PR) ? vals_choke.PR : NaN)
         push!(
@@ -589,7 +589,7 @@ function _sample_compressor_map(
                 pr_eval[i, j] = NaN
                 eta_eval[i, j] = NaN
             else
-                vals = Compressor.compressor_performance_map_from_stagnation(map, omega, mdot, Tt_in, Pt_in)
+                vals = Compressor.performance_from_stagnation(map, omega, mdot, Tt_in, Pt_in)
                 pr_eval[i, j] = vals.PR
                 eta_eval[i, j] = (isfinite(vals.eta) && vals.eta > 0) ? vals.eta : NaN
             end

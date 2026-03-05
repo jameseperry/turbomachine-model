@@ -6,7 +6,6 @@ using TOML
 
 const _DEFAULT_COMPRESSOR_MAP_TOML_GROUPS = (
     "compressor_map",
-    "compressor_meanline_model",
 )
 
 function _toml_group(data::Dict{String,Any}, group::AbstractString)
@@ -26,8 +25,6 @@ function _compressor_map_type_from_format(format::AbstractString)
         return TabulatedCompressorPerformanceMap
     elseif format == "compressor_nondimensional_performance_map"
         return NonDimensionalTabulatedCompressorPerformanceMap
-    elseif format == "compressor_meanline_model"
-        return CompressorMeanlineModel
     end
     error("unsupported compressor map format $(format)")
 end

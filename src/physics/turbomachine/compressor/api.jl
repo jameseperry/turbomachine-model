@@ -12,13 +12,13 @@ Returns:
 - `eta`: adiabatic efficiency
 - optional diagnostics (implementation-defined), for example map-coordinate values.
 """
-compressor_performance_map_from_stagnation(
+performance_from_stagnation(
     map::AbstractCompressorPerformanceMap,
     omega::Real,
     mdot::Real,
     Tt_in::Real,
     Pt_in::Real,
-) = error("compressor_performance_map_from_stagnation not implemented for $(typeof(map))")
+) = error("performance_from_stagnation not implemented for $(typeof(map))")
 
 """
 Physical operating domain for a compressor map at a given inlet stagnation state.

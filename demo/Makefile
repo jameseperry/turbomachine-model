@@ -17,20 +17,20 @@ OPERATING_SWEEP_PLOTS := $(ALL_MAP_TOMLS:.toml=_operating_sweep.png)
 all: $(MEANLINE_ND_MAPS) $(PERFORMANCE_MAP_PLOTS) $(OPERATING_SWEEP_PLOTS)
 
 sources:
-	mkdir -p demo/compressor/map/dim/bilinear
-	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_tabulated demo/compressor/map/dim/bilinear/demo_tabulated_compressor_map.toml --interpolation bilinear --group compressor_map
+	mkdir -p compressor/map/dim/bilinear
+	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_tabulated compressor/map/dim/bilinear/demo_tabulated_compressor_map.toml --interpolation bilinear
 
-	mkdir -p demo/compressor/map/dim/bicubic
-	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_tabulated demo/compressor/map/dim/bicubic/demo_tabulated_compressor_map.toml --interpolation bicubic --group compressor_map
+	mkdir -p compressor/map/dim/bicubic
+	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_tabulated compressor/map/dim/bicubic/demo_tabulated_compressor_map.toml --interpolation bicubic
 
-	mkdir -p demo/compressor/map/nd/bilinear
-	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_nondimensional_tabulated demo/compressor/map/nd/bilinear/demo_tabulated_nondimensional_compressor_map.toml --interpolation bilinear --group compressor_map
+	mkdir -p compressor/map/nd/bilinear
+	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_nondimensional_tabulated compressor/map/nd/bilinear/demo_tabulated_nondimensional_compressor_map.toml --interpolation bilinear
 
-	mkdir -p demo/compressor/map/nd/bicubic
-	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_nondimensional_tabulated demo/compressor/map/nd/bicubic/demo_tabulated_nondimensional_compressor_map.toml --interpolation bicubic --group compressor_map
+	mkdir -p compressor/map/nd/bicubic
+	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_nondimensional_tabulated compressor/map/nd/bicubic/demo_tabulated_nondimensional_compressor_map.toml --interpolation bicubic
 
-	mkdir -p demo/compressor/meanline
-	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_meanline_model demo/compressor/meanline/demo_compressor_meanline_model.toml --group compressor_meanline_model
+	mkdir -p compressor/meanline
+	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_meanline_model compressor/meanline/demo_compressor_meanline_model.toml
 
 
 plots: $(PERFORMANCE_MAP_PLOTS)

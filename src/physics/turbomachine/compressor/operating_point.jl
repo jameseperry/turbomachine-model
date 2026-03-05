@@ -118,7 +118,7 @@ function solve_compressor_operating_point(
     )
 
     Tt_in = Fluids.temperature(eos, pt_in, ht_in)
-    map_vals = compressor_performance_map_from_stagnation(
+    map_vals = performance_from_stagnation(
         compressor_map,
         omega,
         mdot,
@@ -168,7 +168,7 @@ function _compressor_condition_diagnostics(
     flow_mdot_max = max(mdot_surge, mdot_choke)
 
     pr_at = mdot -> begin
-        vals = compressor_performance_map_from_stagnation(map, omega, mdot, Tt_in, pt_in)
+        vals = performance_from_stagnation(map, omega, mdot, Tt_in, pt_in)
         return vals.PR
     end
 
@@ -266,7 +266,7 @@ function compressor_pr_roots(
 
     m_lo, m_hi = _compressor_flow_bounds(map, omega_f, Tt_in_f, Pt_in_f)
     f = mdot -> begin
-        vals = compressor_performance_map_from_stagnation(map, omega_f, mdot, Tt_in_f, Pt_in_f)
+        vals = performance_from_stagnation(map, omega_f, mdot, Tt_in_f, Pt_in_f)
         return vals.PR - target_pr_f
     end
     roots_mdot = bracket_bisect_roots(
@@ -279,7 +279,7 @@ function compressor_pr_roots(
 
     roots = NamedTuple[]
     for mdot in roots_mdot
-        vals = compressor_performance_map_from_stagnation(map, omega_f, mdot, Tt_in_f, Pt_in_f)
+        vals = performance_from_stagnation(map, omega_f, mdot, Tt_in_f, Pt_in_f)
         push!(roots, (mdot=mdot, PR=vals.PR, eta=vals.eta))
     end
     return roots
@@ -414,7 +414,7 @@ function _compressor_operating_margins(
     surge_margin = mdot - mdot_surge
     choke_margin = mdot_choke - mdot
 
-    map_vals = compressor_performance_map_from_stagnation(map, omega, mdot, Tt_in, pt_in)
+    map_vals = performance_from_stagnation(map, omega, mdot, Tt_in, pt_in)
     stall_flag = hasproperty(map_vals, :stall) ? Bool(map_vals.stall) : false
     choke_flag = hasproperty(map_vals, :choke) ? Bool(map_vals.choke) : false
 

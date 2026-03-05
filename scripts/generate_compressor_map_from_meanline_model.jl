@@ -112,8 +112,6 @@ function _main(args::Vector{String}=ARGS)
     )
     nd_map = Compressor.tabulate_compressor_meanline_model(
         meanline_model;
-        Tt_in_ref=Tt_in_ref,
-        Pt_in_ref=Pt_in_ref,
         n_speed=n_speed,
         n_flow=n_flow,
         interpolation=interpolation,

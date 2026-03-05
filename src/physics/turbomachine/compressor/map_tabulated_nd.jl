@@ -202,7 +202,7 @@ Evaluate a compressor map from physical values and local stagnation state.
 
 Returns `(PR, eta, speed_coord, flow_coord, stall, choke, valid)`.
 """
-function compressor_performance_map_from_stagnation(
+function performance_from_stagnation(
     map::NonDimensionalTabulatedCompressorPerformanceMap,
     omega::Real,
     mdot::Real,
