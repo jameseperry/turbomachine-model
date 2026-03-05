@@ -123,7 +123,7 @@ Returns `(omega_corr, PR_turb, mdot_corr, mdot, eta)` where
 `PR_turb = Pt_in / Pt_out`.
 """
 function turbine_performance_map_from_stagnation(
-    map::AbstractTurbinePerformanceMap,
+    map::TabulatedTurbinePerformanceMap,
     omega::Real,
     Pt_in::Real,
     Pt_out::Real,

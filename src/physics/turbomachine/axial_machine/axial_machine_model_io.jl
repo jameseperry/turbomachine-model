@@ -121,7 +121,7 @@ function write_toml(
     node["gas_constant"] = model.gas_constant
     node["A_ref"] = model.A_ref
     node["A_station"] = model.A_station
-    node["nu_theta_station1"] = model.nu_theta_station1
+    node["nu_theta_first_rotor"] = model.nu_theta_first_rotor
     node["m_tip_bounds"] = [model.m_tip_bounds[1], model.m_tip_bounds[2]]
     node["phi_in_bounds"] = [model.phi_in_bounds[1], model.phi_in_bounds[2]]
     node["rows"] = [_row_to_toml_dict(row) for row in model.rows]
@@ -141,7 +141,14 @@ function read_toml(
     for key in ("gamma", "gas_constant", "A_ref", "A_station", "rows")
         haskey(node, key) || error("missing TOML key $(key)")
     end
-    nu_theta_station1 = haskey(node, "nu_theta_station1") ? Float64(node["nu_theta_station1"]) : 0.0
+    nu_theta_first_rotor = if haskey(node, "nu_theta_first_rotor")
+        Float64(node["nu_theta_first_rotor"])
+    elseif haskey(node, "nu_theta_station1")
+        # Backward-compatibility for older files.
+        Float64(node["nu_theta_station1"])
+    else
+        0.0
+    end
     m_tip_bounds = haskey(node, "m_tip_bounds") ? (Float64(node["m_tip_bounds"][1]), Float64(node["m_tip_bounds"][2])) : (0.5, 1.2)
     phi_in_bounds = haskey(node, "phi_in_bounds") ? (Float64(node["phi_in_bounds"][1]), Float64(node["phi_in_bounds"][2])) : (0.2, 0.9)
     rows = AxialRow[_row_from_toml_dict(row_data) for row_data in node["rows"]]
@@ -151,7 +158,7 @@ function read_toml(
         Float64(node["A_ref"]),
         Float64.(node["A_station"]),
         rows,
-        nu_theta_station1,
+        nu_theta_first_rotor,
         m_tip_bounds,
         phi_in_bounds,
     )

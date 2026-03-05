@@ -30,18 +30,6 @@ Base.@kwdef struct StatorAeroModel{T<:Real} <: AbstractRowAeroModel
 end
 
 """
-Row aerodynamic input state.
-"""
-struct RowAeroInput{T}
-    nu_x_in::T
-    nu_theta_in::T
-    nu_u::T
-    tau_in::T
-    pi_in::T
-    mu::T
-end
-
-"""
 Row aerodynamic output contract for the marcher.
 """
 struct RowAeroOutput{T}
@@ -86,10 +74,11 @@ end
 
 function row_aero(
     model::RotorAeroModel{T},
-    row::AxialRow,
-    input::RowAeroInput{U},
+    nu_x_in::U,
+    nu_theta_in::U,
+    nu_u::U,
 ) where {T<:Real,U<:Real}
-    beta_in = atan(input.nu_theta_in - input.nu_u, input.nu_x_in)
+    beta_in = atan(nu_theta_in - nu_u, nu_x_in)
     incidence = beta_in - model.beta_ref
     beta_out = model.beta_ref - model.beta_incidence_sensitivity * incidence
     k_theta = clamp(tan(beta_out), model.k_theta_min, model.k_theta_max)
@@ -107,10 +96,11 @@ end
 
 function row_aero(
     model::StatorAeroModel{T},
-    row::AxialRow,
-    input::RowAeroInput{U},
+    nu_x_in::U,
+    nu_theta_in::U,
+    _nu_u::U,
 ) where {T<:Real,U<:Real}
-    alpha_in = atan(input.nu_theta_in, input.nu_x_in)
+    alpha_in = atan(nu_theta_in, nu_x_in)
     incidence = alpha_in - model.alpha_ref
     alpha_out = model.alpha_ref - model.alpha_incidence_sensitivity * incidence
     k_theta = clamp(tan(alpha_out), model.k_theta_min, model.k_theta_max)

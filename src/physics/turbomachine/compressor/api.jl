@@ -2,7 +2,7 @@
 Compressor performance map API.
 """
 
-abstract type AbstractCompressorPerformanceMap end
+import ..AbstractCompressorPerformanceMap
 
 """
 Evaluate a compressor map using physical operating conditions.

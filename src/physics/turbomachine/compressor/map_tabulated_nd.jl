@@ -2,123 +2,14 @@
 Tabulated compressor performance map implementation (non-dimensional form).
 """
 
-"""
-Tabulated compressor map over non-dimensional coordinates.
+import ..NondimensionalPerformanceMap
+const NonDimensionalTabulatedCompressorPerformanceMap = NondimensionalPerformanceMap
 
-Domain inputs:
-- `M_tip = U_tip / a0_in`
-- `phi_in = Vx_1 / U_m_1`
-
-Outputs:
-- `PR = Pt_out / Pt_in`
-- `eta` total-to-total efficiency
-
-Geometry fields are used to convert physical `(omega, mdot, Tt_in, Pt_in)` into
-`(M_tip, phi_in)`.
-"""
-struct NonDimensionalTabulatedCompressorPerformanceMap{M<:AbstractTableMap} <: AbstractCompressorPerformanceMap
-    gamma::Float64
-    gas_constant::Float64
-    tip_radius_inlet::Float64
-    mean_radius_inlet::Float64
-    inlet_area::Float64
-    pr_map::M
-    eta_map::M
-    phi_surge::Vector{Float64}
-    phi_choke::Vector{Float64}
-end
-
-function NonDimensionalTabulatedCompressorPerformanceMap(
-    gamma::Real,
-    gas_constant::Real,
-    tip_radius_inlet::Real,
-    mean_radius_inlet::Real,
-    inlet_area::Real,
-    pr_map::M,
-    eta_map::M,
-    phi_surge::Vector{<:Real},
-    phi_choke::Vector{<:Real},
-) where {M<:AbstractTableMap}
-    gamma > 1 || error("gamma must be > 1")
-    gas_constant > 0 || error("gas_constant must be > 0")
-    tip_radius_inlet > 0 || error("tip_radius_inlet must be > 0")
-    mean_radius_inlet > 0 || error("mean_radius_inlet must be > 0")
-    inlet_area > 0 || error("inlet_area must be > 0")
-    table_xgrid(pr_map) == table_xgrid(eta_map) || error("pr_map/eta_map x grids must match")
-    table_ygrid(pr_map) == table_ygrid(eta_map) || error("pr_map/eta_map y grids must match")
-
-    m_grid = table_xgrid(pr_map)
-    length(phi_surge) == length(m_grid) || error("phi_surge length must match M_tip grid length")
-    length(phi_choke) == length(m_grid) || error("phi_choke length must match M_tip grid length")
-
-    phi_surge_f = Float64.(phi_surge)
-    phi_choke_f = Float64.(phi_choke)
-    all(phi_surge_f .<= phi_choke_f) || error("phi_surge must be <= phi_choke at every M_tip grid point")
-
-    return NonDimensionalTabulatedCompressorPerformanceMap(
-        Float64(gamma),
-        Float64(gas_constant),
-        Float64(tip_radius_inlet),
-        Float64(mean_radius_inlet),
-        Float64(inlet_area),
-        pr_map,
-        eta_map,
-        phi_surge_f,
-        phi_choke_f,
-    )
-end
-
-function NonDimensionalTabulatedCompressorPerformanceMap(
-    gamma::Real,
-    gas_constant::Real,
-    tip_radius_inlet::Real,
-    mean_radius_inlet::Real,
-    inlet_area::Real,
-    m_tip_grid::Vector{<:Real},
-    phi_in_grid::Vector{<:Real},
-    pr_table::Matrix{<:Real},
-    eta_table::Matrix{<:Real};
-    interpolation::Symbol,
-    phi_surge::Union{Nothing,Vector{<:Real}}=nothing,
-    phi_choke::Union{Nothing,Vector{<:Real}}=nothing,
-)
-    length(m_tip_grid) >= 2 || error("m_tip_grid must have at least 2 points")
-    length(phi_in_grid) >= 2 || error("phi_in_grid must have at least 2 points")
-    issorted(m_tip_grid) || error("m_tip_grid must be sorted ascending")
-    issorted(phi_in_grid) || error("phi_in_grid must be sorted ascending")
-    size(pr_table) == (length(m_tip_grid), length(phi_in_grid)) ||
-        error("pr_table size must match (length(m_tip_grid), length(phi_in_grid))")
-    size(eta_table) == (length(m_tip_grid), length(phi_in_grid)) ||
-        error("eta_table size must match (length(m_tip_grid), length(phi_in_grid))")
-
-    m_tip_grid_f = Float64.(m_tip_grid)
-    phi_in_grid_f = Float64.(phi_in_grid)
-    pr_table_f = Float64.(pr_table)
-    eta_table_f = Float64.(eta_table)
-    pr_map = interpolation_map(interpolation, m_tip_grid_f, phi_in_grid_f, pr_table_f)
-    eta_map = interpolation_map(interpolation, m_tip_grid_f, phi_in_grid_f, eta_table_f)
-
-    phi_surge_f = isnothing(phi_surge) ? fill(first(phi_in_grid_f), length(m_tip_grid_f)) : Float64.(phi_surge)
-    phi_choke_f = isnothing(phi_choke) ? fill(last(phi_in_grid_f), length(m_tip_grid_f)) : Float64.(phi_choke)
-
-    return NonDimensionalTabulatedCompressorPerformanceMap(
-        gamma,
-        gas_constant,
-        tip_radius_inlet,
-        mean_radius_inlet,
-        inlet_area,
-        pr_map,
-        eta_map,
-        phi_surge_f,
-        phi_choke_f,
-    )
-end
-
-_m_tip_grid(map::NonDimensionalTabulatedCompressorPerformanceMap) = table_xgrid(map.pr_map)
-_phi_in_grid(map::NonDimensionalTabulatedCompressorPerformanceMap) = table_ygrid(map.pr_map)
-_pr_table(map::NonDimensionalTabulatedCompressorPerformanceMap) = table_values(map.pr_map)
-_eta_table(map::NonDimensionalTabulatedCompressorPerformanceMap) = table_values(map.eta_map)
-_interpolation_kind(map::NonDimensionalTabulatedCompressorPerformanceMap) = table_interpolation(map.pr_map)
+_m_tip_grid(map::NondimensionalPerformanceMap) = table_xgrid(map.pr_map)
+_phi_in_grid(map::NondimensionalPerformanceMap) = table_ygrid(map.pr_map)
+_pr_table(map::NondimensionalPerformanceMap) = table_values(map.pr_map)
+_eta_table(map::NondimensionalPerformanceMap) = table_values(map.eta_map)
+_interpolation_kind(map::NondimensionalPerformanceMap) = table_interpolation(map.pr_map)
 
 function _interp_linear_1d_clamped(xgrid::AbstractVector{<:Real}, ygrid::AbstractVector{<:Real}, x::Real)
     x1 = first(xgrid)
@@ -136,7 +27,7 @@ end
 
 """Map-coordinate speed for non-dimensional maps (`M_tip`)."""
 function _map_speed_coordinate_from_stagnation(
-    map::NonDimensionalTabulatedCompressorPerformanceMap,
+    map::NondimensionalPerformanceMap,
     omega::Real,
     Tt_in::Real,
     Pt_in::Real,
@@ -148,7 +39,7 @@ end
 
 """Map-coordinate flow for non-dimensional maps (`phi_in`)."""
 function _map_flow_coordinate_from_stagnation(
-    map::NonDimensionalTabulatedCompressorPerformanceMap,
+    map::NondimensionalPerformanceMap,
     omega::Real,
     mdot::Real,
     Tt_in::Real,
@@ -164,7 +55,7 @@ end
 
 """Physical mdot from map flow-coordinate (`phi_in`)."""
 function _physical_mdot_from_map_flow_coordinate(
-    map::NonDimensionalTabulatedCompressorPerformanceMap,
+    map::NondimensionalPerformanceMap,
     omega::Real,
     map_flow::Real,
     Tt_in::Real,
@@ -178,7 +69,7 @@ end
 
 """Low-level map evaluation in map coordinates."""
 function _compressor_performance_map(
-    map::NonDimensionalTabulatedCompressorPerformanceMap,
+    map::NondimensionalPerformanceMap,
     speed_coord::Real,
     flow_coord::Real,
 )
@@ -203,7 +94,7 @@ Evaluate a compressor map from physical values and local stagnation state.
 Returns `(PR, eta, speed_coord, flow_coord, stall, choke, valid)`.
 """
 function performance_from_stagnation(
-    map::NonDimensionalTabulatedCompressorPerformanceMap,
+    map::NondimensionalPerformanceMap,
     omega::Real,
     mdot::Real,
     Tt_in::Real,
@@ -227,7 +118,7 @@ end
 Physical operating domain for a non-dimensional map at a given inlet state.
 """
 function performance_map_domain(
-    map::NonDimensionalTabulatedCompressorPerformanceMap,
+    map::NondimensionalPerformanceMap,
     Tt_in::Real,
     Pt_in::Real,
 )
@@ -266,7 +157,7 @@ function performance_map_domain(
 end
 
 function write_toml(
-    map::NonDimensionalTabulatedCompressorPerformanceMap,
+    map::NondimensionalPerformanceMap,
     path::AbstractString;
     group::AbstractString="compressor_map",
 )
@@ -290,7 +181,7 @@ function write_toml(
 end
 
 function read_toml(
-    ::Type{NonDimensionalTabulatedCompressorPerformanceMap},
+    ::Type{NondimensionalPerformanceMap},
     path::AbstractString;
     group::AbstractString="compressor_map",
 )
@@ -316,7 +207,7 @@ function read_toml(
     pr_map = _table_map_from_toml_dict(node["pr_map"])
     eta_map = _table_map_from_toml_dict(node["eta_map"])
 
-    return NonDimensionalTabulatedCompressorPerformanceMap(
+    return NondimensionalPerformanceMap(
         gamma,
         gas_constant,
         tip_radius_inlet,
@@ -331,7 +222,7 @@ end
 
 """Demo non-dimensional tabulated compressor map for development/testing."""
 function demo_nondimensional_tabulated_compressor_performance_map(; interpolation::Symbol=:bilinear)
-    NonDimensionalTabulatedCompressorPerformanceMap(
+    NondimensionalPerformanceMap(
         1.4,
         287.05,
         0.22,

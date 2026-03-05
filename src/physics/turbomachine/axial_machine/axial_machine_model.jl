@@ -10,8 +10,11 @@ Field meanings:
   is `A_ref * A_station[k]` at station `k`. Length must be `n_rows + 1`.
 - `rows`: ordered row models from inlet to outlet. Each row advances the
   solution from station `k` to `k+1`.
-- `nu_theta_station1`: inlet circumferential velocity coefficient at station 1,
-  with `nu_theta = V_theta / a0_in` (signed by swirl direction).
+- `first_rotor_index`: cached index of the first rotor row. If no rotor row is
+  present, this falls back to `1` for compatibility with existing behavior.
+- `nu_theta_first_rotor`: inlet circumferential velocity coefficient at station 1
+  (upstream of the first rotor), with `nu_theta = V_theta / a0_in`
+  (signed by swirl direction).
 - `m_tip_bounds`: tabulation/operating domain bounds for reference tip Mach-like
   speed, `m_tip = omega * r_tip_ref / a0_in`.
 - `phi_in_bounds`: tabulation/operating domain bounds for inlet flow
@@ -28,9 +31,10 @@ struct AxialMachineModel
 
     # Ordered aero-row closures that map station k -> k+1.
     rows::Vector{AxialRow}
+    first_rotor_index::Int
 
-    # Inlet swirl state (nu_theta) at station 1.
-    nu_theta_station1::Float64
+    # Inlet swirl state (nu_theta) at station 1 (first-rotor inlet).
+    nu_theta_first_rotor::Float64
 
     # Recommended (m_tip, phi_in) bounds for map tabulation/sweeps.
     m_tip_bounds::Tuple{Float64,Float64}
@@ -43,7 +47,7 @@ function AxialMachineModel(
     A_ref::Real,
     A_station::Vector{<:Real},
     rows::Vector{AxialRow},
-    nu_theta_station1::Real,
+    nu_theta_first_rotor::Real,
     m_tip_bounds::Tuple{<:Real,<:Real},
     phi_in_bounds::Tuple{<:Real,<:Real},
 )
@@ -57,19 +61,18 @@ function AxialMachineModel(
     phi_lo, phi_hi = Float64(phi_in_bounds[1]), Float64(phi_in_bounds[2])
     m_hi > m_lo > 0 || error("m_tip_bounds must satisfy 0 < lo < hi")
     phi_hi > phi_lo > 0 || error("phi_in_bounds must satisfy 0 < lo < hi")
+    first_rotor_idx = let idx = findfirst(row -> row.kind == :rotor, rows)
+        isnothing(idx) ? 1 : idx
+    end
     return AxialMachineModel(
         Float64(gamma),
         Float64(gas_constant),
         Float64(A_ref),
         Float64.(A_station),
         rows,
-        Float64(nu_theta_station1),
+        first_rotor_idx,
+        Float64(nu_theta_first_rotor),
         (m_lo, m_hi),
         (phi_lo, phi_hi),
     )
-end
-
-function first_rotor_index(model::AxialMachineModel)
-    idx = findfirst(row -> row.kind == :rotor, model.rows)
-    return isnothing(idx) ? 1 : idx
 end

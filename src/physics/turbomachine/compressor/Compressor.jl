@@ -13,6 +13,7 @@ include("operating_point.jl")
 
 export AbstractCompressorPerformanceMap
 export TabulatedCompressorPerformanceMap
+export NondimensionalPerformanceMap
 export NonDimensionalTabulatedCompressorPerformanceMap
 export CompressorMeanlineModel
 export tabulate_compressor_meanline_model

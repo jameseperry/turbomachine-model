@@ -23,7 +23,8 @@ function _bisect_zero(
 )
     fa = f(a)
     fb = f(b)
-    fa * fb <= 0 || error("invalid bisection bracket")
+    (isfinite(fa) && isfinite(fb)) || return NaN
+    fa * fb <= 0 || return NaN
 
     lo = a
     hi = b
@@ -32,6 +33,7 @@ function _bisect_zero(
     for _ in 1:max_iters
         mid = 0.5 * (lo + hi)
         fmid = f(mid)
+        isfinite(fmid) || return NaN
         if abs(fmid) <= tol || abs(hi - lo) <= 1e-12
             break
         end
@@ -61,6 +63,7 @@ function bracket_bisect_roots(
     prior_roots::AbstractVector{<:Real}=Float64[],
     continuation_band_fraction::Float64=0.02,
     max_bisect_iters::Int=60,
+    dedupe_atol::Union{Nothing,Float64}=nothing,
 )
     n_scan >= 5 || error("n_scan must be >= 5")
     x_lo, x_hi = x_range
@@ -90,19 +93,21 @@ function bracket_bisect_roots(
         x2 = grid[i + 1]
         f1 = f_vals[i]
         f2 = f_vals[i + 1]
-        if abs(f1) <= root_tol
+        if isfinite(f1) && abs(f1) <= root_tol
             push!(roots, x1)
             continue
         end
-        if f1 * f2 < 0.0
-            push!(roots, _bisect_zero(f, x1, x2; tol=root_tol, max_iters=max_bisect_iters))
+        if isfinite(f1) && isfinite(f2) && f1 * f2 < 0.0
+            r = _bisect_zero(f, x1, x2; tol=root_tol, max_iters=max_bisect_iters)
+            isfinite(r) && push!(roots, r)
         end
     end
-    if abs(f_vals[end]) <= root_tol
+    if isfinite(f_vals[end]) && abs(f_vals[end]) <= root_tol
         push!(roots, grid[end])
     end
 
-    dedupe_tol = max((x_hi - x_lo) / 1e6, 1e-10)
+    isempty(roots) && return roots
+    dedupe_tol = isnothing(dedupe_atol) ? max((x_hi - x_lo) / 1e6, 1e-10) : dedupe_atol
     return _dedupe_sorted_values(roots; atol=dedupe_tol)
 end
 

@@ -1,11 +1,10 @@
 """
-Compressor meanline model wrappers built on shared axial-machine core.
+Compressor meanline model wrappers built on shared axial-machine AxialMachine.
 """
 
 import ..AxialMachine
 
-const Core = AxialMachine
-const CompressorMeanlineModel = Core.AxialMachineModel
+const CompressorMeanlineModel = AxialMachine.AxialMachineModel
 
 function _resolve_tabulation_grids(
     model::CompressorMeanlineModel,
@@ -41,61 +40,6 @@ function _validate_tabulation_inputs(
     return nothing
 end
 
-function _compute_surge_choke_limits(
-    model::CompressorMeanlineModel,
-    m_grid::Vector{Float64},
-    phi_lo::Float64,
-    phi_hi::Float64,
-    boundary_resolution::Int,
-)
-    phi_probe = collect(range(phi_lo, phi_hi, length=boundary_resolution))
-    valid_speed_idx = Int[]
-    phi_surge = Float64[]
-    phi_choke = Float64[]
-    for (i, m_tip) in pairs(m_grid)
-        valid_phis = Float64[]
-        for phi in phi_probe
-            vals = Core.streamtube_solve(model, m_tip, phi)
-            if vals.valid && isfinite(vals.PR) && isfinite(vals.eta)
-                push!(valid_phis, phi)
-            end
-        end
-        isempty(valid_phis) && continue
-        push!(valid_speed_idx, i)
-        push!(phi_surge, first(valid_phis))
-        push!(phi_choke, last(valid_phis))
-    end
-    length(valid_speed_idx) >= 2 ||
-        error("meanline model has fewer than two valid speed lines in requested tabulation range")
-    return (
-        m_grid_valid=m_grid[valid_speed_idx],
-        phi_surge=phi_surge,
-        phi_choke=phi_choke,
-    )
-end
-
-function _compute_nd_tables(
-    model::CompressorMeanlineModel,
-    m_grid_valid::Vector{Float64},
-    phi_grid::Vector{Float64},
-    phi_surge::Vector{Float64},
-    phi_choke::Vector{Float64},
-)
-    pr_table = Matrix{Float64}(undef, length(m_grid_valid), length(phi_grid))
-    eta_table = Matrix{Float64}(undef, length(m_grid_valid), length(phi_grid))
-    for (i, m_tip) in pairs(m_grid_valid)
-        for (j, phi_raw) in pairs(phi_grid)
-            phi = clamp(phi_raw, phi_surge[i], phi_choke[i])
-            vals = Core.streamtube_solve(model, m_tip, phi)
-            (vals.valid && isfinite(vals.PR) && isfinite(vals.eta)) ||
-                error("meanline tabulation produced non-finite value at m_tip=$(m_tip), phi=$(phi)")
-            pr_table[i, j] = vals.PR
-            eta_table[i, j] = vals.eta
-        end
-    end
-    return (pr_table=pr_table, eta_table=eta_table)
-end
-
 function _build_nd_tabulated_map(
     model::CompressorMeanlineModel,
     m_grid_valid::Vector{Float64},
@@ -106,11 +50,11 @@ function _build_nd_tabulated_map(
     phi_surge::Vector{Float64},
     phi_choke::Vector{Float64},
 )
-    idx_ref = Core.first_rotor_index(model)
+    idx_ref = model.first_rotor_index
     tip_radius_inlet = model.rows[idx_ref].r_tip
     mean_radius_inlet = model.rows[idx_ref].r_mean
     inlet_area = model.A_ref * model.A_station[1]
-    return NonDimensionalTabulatedCompressorPerformanceMap(
+    return NondimensionalPerformanceMap(
         model.gamma,
         model.gas_constant,
         tip_radius_inlet,
@@ -148,33 +92,40 @@ function tabulate_compressor_meanline_model(
         grids.phi_grid,
     )
 
-    limits = _compute_surge_choke_limits(
+    limits = AxialMachine.feasible_flow_limits(
         model,
         grids.m_grid,
         grids.phi_lo,
-        grids.phi_hi,
-        boundary_resolution,
+        grids.phi_hi;
+        boundary_resolution=boundary_resolution,
+        is_feasible=(vals -> vals.valid && isfinite(vals.PR) && isfinite(vals.eta)),
     )
-    tables = _compute_nd_tables(
+    length(limits.valid_speed_idx) >= 2 ||
+        error("meanline model has fewer than two valid speed lines in requested tabulation range")
+    m_grid_valid = grids.m_grid[limits.valid_speed_idx]
+    phi_surge = limits.flow_min
+    phi_choke = limits.flow_max
+    tables = AxialMachine.sample_streamtube_solve(
         model,
-        limits.m_grid_valid,
-        grids.phi_grid,
-        limits.phi_surge,
-        limits.phi_choke,
+        m_grid_valid,
+        grids.phi_grid;
+        flow_min=phi_surge,
+        flow_max=phi_choke,
+        is_feasible=(vals -> vals.valid && isfinite(vals.PR) && isfinite(vals.eta)),
     )
     return _build_nd_tabulated_map(
         model,
-        limits.m_grid_valid,
+        m_grid_valid,
         grids.phi_grid,
         tables.pr_table,
         tables.eta_table,
         interpolation,
-        limits.phi_surge,
-        limits.phi_choke,
+        phi_surge,
+        phi_choke,
     )
 end
 
 """
 Demo compressor meanline model for development/testing.
 """
-demo_compressor_meanline_model() = Core.demo_axial_machine_model()
+demo_compressor_meanline_model() = AxialMachine.demo_axial_machine_model()

@@ -1,4 +1,6 @@
-function _station_rhs(
+using ....Utility: bracket_bisect_roots
+
+function _mass_flow_invariant(
     gamma::Real,
     pi::Real,
     A::Real,
@@ -10,75 +12,6 @@ function _station_rhs(
     term = 1 - ((gamma - 1) / (2 * tau)) * (nu_x^2 + nu_theta^2)
     term > 0 || return NaN
     return pi * A * (nu_x / tau) * term^(1 / (gamma - 1))
-end
-
-function _bisect_root(
-    f::Function,
-    a::Float64,
-    b::Float64;
-    tol::Float64=1e-10,
-    max_iters::Int=80,
-)
-    fa = f(a)
-    fb = f(b)
-    isfinite(fa) && isfinite(fb) || return NaN
-    fa * fb <= 0 || return NaN
-    lo = a
-    hi = b
-    flo = fa
-    mid = 0.5 * (lo + hi)
-    for _ in 1:max_iters
-        mid = 0.5 * (lo + hi)
-        fmid = f(mid)
-        isfinite(fmid) || return NaN
-        if abs(fmid) <= tol || abs(hi - lo) <= tol
-            return mid
-        end
-        if flo * fmid <= 0
-            hi = mid
-        else
-            lo = mid
-            flo = fmid
-        end
-    end
-    return mid
-end
-
-function _find_scalar_roots(
-    f::Function,
-    x_lo::Float64,
-    x_hi::Float64;
-    n_scan::Int=201,
-    tol::Float64=1e-10,
-)
-    x_hi > x_lo || return Float64[]
-    grid = collect(range(x_lo, x_hi, length=n_scan))
-    vals = [f(x) for x in grid]
-    roots = Float64[]
-    for i in eachindex(grid)
-        fi = vals[i]
-        if isfinite(fi) && abs(fi) <= tol
-            push!(roots, grid[i])
-        end
-    end
-    for i in 1:(length(grid) - 1)
-        f1 = vals[i]
-        f2 = vals[i + 1]
-        if !(isfinite(f1) && isfinite(f2))
-            continue
-        end
-        if f1 * f2 < 0
-            r = _bisect_root(f, grid[i], grid[i + 1]; tol=tol)
-            isfinite(r) && push!(roots, r)
-        end
-    end
-    isempty(roots) && return roots
-    sort!(roots)
-    out = Float64[roots[1]]
-    for i in 2:length(roots)
-        abs(roots[i] - out[end]) > 1e-8 && push!(out, roots[i])
-    end
-    return out
 end
 
 function _solve_station_nu_x(
@@ -95,25 +28,138 @@ function _solve_station_nu_x(
     term > 0 || return (converged=false, nu_x=NaN)
     x_hi = sqrt(term) * (1 - 1e-8)
     x_lo = 1e-10
-    f = nu_x -> mu - _station_rhs(gamma, pi, A, tau, nu_x, nu_theta)
-    roots = _find_scalar_roots(f, x_lo, x_hi)
+    f = nu_x -> mu - _mass_flow_invariant(gamma, pi, A, tau, nu_x, nu_theta)
+    roots = bracket_bisect_roots(
+        f,
+        (x_lo, x_hi);
+        n_scan=201,
+        root_tol=1e-10,
+        max_bisect_iters=80,
+        dedupe_atol=1e-8,
+    )
     isempty(roots) && return (converged=false, nu_x=NaN)
     nu_x = prefer == :high ? last(roots) : first(roots)
     return (converged=true, nu_x=nu_x)
 end
 
-function nu_u_for_row(
+function _advance_row!(
     model::AxialMachineModel,
     row::AxialRow,
+    aero::RotorAeroModel,
+    station_in::Int,
+    station_out::Int,
+    mu::Float64,
+    tau::Vector{Float64},
+    pi::Vector{Float64},
+    nu_theta::Vector{Float64},
+    nu_x::Vector{Float64},
     m_tip::Float64,
+    prefer_root::Symbol,
 )
-    idx_ref = first_rotor_index(model)
+    row.kind == :rotor || error("_advance_row! rotor method requires row.kind == :rotor")
+    idx_ref = model.first_rotor_index
     r_tip_ref = model.rows[idx_ref].r_tip
-    if row.kind == :rotor
-        return Float64(row.omega_sign) * m_tip * row.r_mean / r_tip_ref
-    else
-        return 0.0
+    nu_u = Float64(row.omega_sign) * m_tip * row.r_mean / r_tip_ref
+    aero_out = row_aero(aero, nu_x[station_in], nu_theta[station_in], nu_u)
+    stall = (aero_out.stall_margin <= 0) || !aero_out.valid
+    aero_out.valid || return (converged=false, choke=false, stall=stall)
+
+    gamma_ratio = model.gamma / (model.gamma - 1)
+    mu_residual = function (nu_x_out)
+        nu_theta_out = nu_u + nu_x_out * aero_out.k_theta_exit
+        tau_out = tau[station_in] + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta[station_in])
+        tau_out > 0 || return NaN
+        pi_out = pi[station_in] * (tau_out / tau[station_in])^gamma_ratio *
+                 exp(-gamma_ratio * aero_out.delta_s_hat)
+        mu_at_nu_x = _mass_flow_invariant(
+            model.gamma,
+            pi_out,
+            model.A_station[station_out],
+            tau_out,
+            nu_x_out,
+            nu_theta_out,
+        )
+        return mu - mu_at_nu_x 
     end
+
+    roots = bracket_bisect_roots(
+        mu_residual,
+        (1e-10, 2.5);
+        n_scan=201,
+        root_tol=1e-10,
+        max_bisect_iters=80,
+        dedupe_atol=1e-8,
+    )
+    isempty(roots) && return (converged=false, choke=true, stall=stall)
+    nu_x_out = prefer_root == :high ? last(roots) : first(roots)
+
+    nu_theta_out = nu_u + nu_x_out * aero_out.k_theta_exit
+    tau_out = tau[station_in] + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta[station_in])
+    tau_out > 0 || return (converged=false, choke=false, stall=stall)
+
+    pi_out = pi[station_in] *
+             (tau_out / tau[station_in])^gamma_ratio *
+             exp(-gamma_ratio * aero_out.delta_s_hat)
+
+    nu_theta[station_out] = nu_theta_out
+    tau[station_out] = tau_out
+    pi[station_out] = pi_out
+    nu_x[station_out] = nu_x_out
+    return (converged=true, choke=false, stall=stall)
+end
+
+function _advance_row!(
+    model::AxialMachineModel,
+    row::AxialRow,
+    aero::StatorAeroModel,
+    station_in::Int,
+    station_out::Int,
+    mu::Float64,
+    tau::Vector{Float64},
+    pi::Vector{Float64},
+    nu_theta::Vector{Float64},
+    nu_x::Vector{Float64},
+    m_tip::Float64,
+    prefer_root::Symbol,
+)
+    row.kind == :stator || error("_advance_row! stator method requires row.kind == :stator")
+    aero_out = row_aero(aero, nu_x[station_in], nu_theta[station_in], 0.0)
+    stall = (aero_out.stall_margin <= 0) || !aero_out.valid
+    aero_out.valid || return (converged=false, choke=false, stall=stall)
+
+    gamma_ratio = model.gamma / (model.gamma - 1)
+    mu_residual = function (nu_x_out)
+        nu_theta_out = nu_x_out * aero_out.k_theta_exit
+        tau_out = tau[station_in]
+        pi_out = pi[station_in] * exp(-gamma_ratio * aero_out.delta_s_hat)
+        mu_at_nu_x = _mass_flow_invariant(
+            model.gamma,
+            pi_out,
+            model.A_station[station_out],
+            tau_out,
+            nu_x_out,
+            nu_theta_out,
+        )
+        
+        return mu - mu_at_nu_x
+    end
+
+    roots = bracket_bisect_roots(
+        mu_residual,
+        (1e-10, 2.5);
+        n_scan=201,
+        root_tol=1e-10,
+        max_bisect_iters=80,
+        dedupe_atol=1e-8,
+    )
+    isempty(roots) && return (converged=false, choke=true, stall=stall)
+    nu_x_out = prefer_root == :high ? last(roots) : first(roots)
+
+    nu_theta[station_out] = nu_x_out * aero_out.k_theta_exit
+    tau[station_out] = tau[station_in]
+    pi[station_out] = pi[station_in] * exp(-gamma_ratio * aero_out.delta_s_hat)
+    nu_x[station_out] = nu_x_out
+    return (converged=true, choke=false, stall=stall)
 end
 
 """
@@ -161,8 +207,10 @@ function streamtube_solve(
 
     tau[1] = 1.0
     pi[1] = 1.0
-    nu_theta[1] = model.nu_theta_station1
-    nu_u1 = nu_u_for_row(model, model.rows[first_rotor_index(model)], m_tip_f)
+    nu_theta[1] = model.nu_theta_first_rotor
+    idx_ref = model.first_rotor_index
+    row_ref = model.rows[idx_ref]
+    nu_u1 = Float64(row_ref.omega_sign) * m_tip_f * row_ref.r_mean / row_ref.r_tip
     abs(nu_u1) > 0 || return (
         PR=NaN,
         eta=NaN,
@@ -179,7 +227,7 @@ function streamtube_solve(
         valid_row=valid_row,
     )
     nu_x[1] = phi_in_f * abs(nu_u1)
-    mu = _station_rhs(model.gamma, 1.0, model.A_station[1], 1.0, nu_x[1], nu_theta[1])
+    mu = _mass_flow_invariant(model.gamma, 1.0, model.A_station[1], 1.0, nu_x[1], nu_theta[1])
     isfinite(mu) || return (
         PR=NaN,
         eta=NaN,
@@ -217,80 +265,26 @@ function streamtube_solve(
         end
         nu_x[station_in] = inlet.nu_x
 
-        nu_u = nu_u_for_row(model, row, m_tip_f)
-        aero_in = RowAeroInput(
-            nu_x[station_in],
-            nu_theta[station_in],
-            nu_u,
-            tau[station_in],
-            pi[station_in],
+        row_step = _advance_row!(
+            model,
+            row,
+            row.aero,
+            station_in,
+            station_out,
             mu,
+            tau,
+            pi,
+            nu_theta,
+            nu_x,
+            m_tip_f,
+            prefer_root,
         )
-        aero_out = row_aero(row.aero, row, aero_in)
-        stall_row[k] = (aero_out.stall_margin <= 0) || !aero_out.valid
-        if !aero_out.valid
+        stall_row[k] = row_step.stall
+        if !row_step.converged
+            choke_row[k] = row_step.choke
             valid_row[k] = false
             break
         end
-
-        gamma_ratio = model.gamma / (model.gamma - 1)
-        f_exit = function (nu_x_out)
-            if row.kind == :rotor
-                nu_theta_out = nu_u + nu_x_out * aero_out.k_theta_exit
-                tau_out = tau[station_in] + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta[station_in])
-                tau_out > 0 || return NaN
-                pi_out = pi[station_in] * (tau_out / tau[station_in])^gamma_ratio *
-                         exp(-gamma_ratio * aero_out.delta_s_hat)
-                rhs = _station_rhs(
-                    model.gamma,
-                    pi_out,
-                    model.A_station[station_out],
-                    tau_out,
-                    nu_x_out,
-                    nu_theta_out,
-                )
-                return mu - rhs
-            else
-                nu_theta_out = nu_x_out * aero_out.k_theta_exit
-                tau_out = tau[station_in]
-                pi_out = pi[station_in] * exp(-gamma_ratio * aero_out.delta_s_hat)
-                rhs = _station_rhs(
-                    model.gamma,
-                    pi_out,
-                    model.A_station[station_out],
-                    tau_out,
-                    nu_x_out,
-                    nu_theta_out,
-                )
-                return mu - rhs
-            end
-        end
-
-        roots = _find_scalar_roots(f_exit, 1e-10, 2.5)
-        if isempty(roots)
-            choke_row[k] = true
-            valid_row[k] = false
-            break
-        end
-        nu_x_out = prefer_root == :high ? last(roots) : first(roots)
-
-        if row.kind == :rotor
-            nu_theta[station_out] = nu_u + nu_x_out * aero_out.k_theta_exit
-            tau[station_out] = tau[station_in] + (model.gamma - 1) * nu_u *
-                               (nu_theta[station_out] - nu_theta[station_in])
-            tau[station_out] > 0 || begin
-                valid_row[k] = false
-                break
-            end
-            pi[station_out] = pi[station_in] *
-                              (tau[station_out] / tau[station_in])^gamma_ratio *
-                              exp(-gamma_ratio * aero_out.delta_s_hat)
-        else
-            nu_theta[station_out] = nu_x_out * aero_out.k_theta_exit
-            tau[station_out] = tau[station_in]
-            pi[station_out] = pi[station_in] * exp(-gamma_ratio * aero_out.delta_s_hat)
-        end
-        nu_x[station_out] = nu_x_out
     end
 
     model_valid = all(valid_row)
@@ -337,4 +331,62 @@ function streamtube_solve(
         choke_row=choke_row,
         valid_row=valid_row,
     )
+end
+
+"""
+    sample_streamtube_solve(model, speed_grid, flow_grid; flow_min=nothing, flow_max=nothing, prefer_root=:low, is_feasible)
+
+Sample `streamtube_solve` over a Cartesian grid of speed/flow coordinates.
+
+Arguments:
+- `speed_grid`: x-axis sample points (e.g., `m_tip`).
+- `flow_grid`: y-axis sample points (e.g., `phi_in`).
+- `flow_min`, `flow_max`: optional per-speed flow bounds. If provided, each
+  sampled flow is clamped to `[flow_min[i], flow_max[i]]` before evaluation.
+- `prefer_root`: root branch selector passed to `streamtube_solve`.
+- `is_feasible`: predicate used to validate each sampled solve.
+
+Returns:
+- `pr_table`: sampled `PR` values.
+- `eta_table`: sampled `eta` values.
+"""
+function sample_streamtube_solve(
+    model::AxialMachineModel,
+    speed_grid::AbstractVector{<:Real},
+    flow_grid::AbstractVector{<:Real};
+    flow_min::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    flow_max::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    prefer_root::Symbol=:low,
+    is_feasible::Function=(vals -> vals.valid && isfinite(vals.PR) && isfinite(vals.eta)),
+)
+    length(speed_grid) >= 1 || error("speed_grid must be non-empty")
+    length(flow_grid) >= 1 || error("flow_grid must be non-empty")
+
+    has_limits = !isnothing(flow_min) || !isnothing(flow_max)
+    if has_limits
+        isnothing(flow_min) && error("flow_min must be provided when using flow limits")
+        isnothing(flow_max) && error("flow_max must be provided when using flow limits")
+        length(flow_min) == length(speed_grid) || error("flow_min length must match speed_grid")
+        length(flow_max) == length(speed_grid) || error("flow_max length must match speed_grid")
+    end
+
+    pr_table = Matrix{Float64}(undef, length(speed_grid), length(flow_grid))
+    eta_table = Matrix{Float64}(undef, length(speed_grid), length(flow_grid))
+
+    for (i, speed_raw) in pairs(speed_grid)
+        speed = Float64(speed_raw)
+        for (j, flow_raw) in pairs(flow_grid)
+            flow = Float64(flow_raw)
+            if has_limits
+                flow = clamp(flow, Float64(flow_min[i]), Float64(flow_max[i]))
+            end
+            vals = streamtube_solve(model, speed, flow; prefer_root=prefer_root)
+            is_feasible(vals) ||
+                error("streamtube sampling produced invalid value at speed=$(speed), flow=$(flow)")
+            pr_table[i, j] = vals.PR
+            eta_table[i, j] = vals.eta
+        end
+    end
+
+    return (pr_table=pr_table, eta_table=eta_table)
 end

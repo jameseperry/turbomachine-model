@@ -94,7 +94,7 @@ function to_nondimensional_tabulated_compressor_map(
         push!(phi_choke, _phi_from_source_map_flow(omega, map_flow_choke))
     end
 
-    return NonDimensionalTabulatedCompressorPerformanceMap(
+    return NondimensionalPerformanceMap(
         gamma,
         gas_constant,
         tip_radius_inlet,
@@ -124,7 +124,7 @@ Arguments:
   - `mdot_corr_grid`: default is linear over mapped source flow bounds.
 """
 function to_tabulated_compressor_map(
-    map::NonDimensionalTabulatedCompressorPerformanceMap;
+    map::NondimensionalPerformanceMap;
     Tt_in_ref::Real=288.15,
     Pt_in_ref::Real=101_325.0,
     Tt_ref::Real=Tt_in_ref,

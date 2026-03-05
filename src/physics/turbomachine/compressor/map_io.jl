@@ -24,7 +24,7 @@ function _compressor_map_type_from_format(format::AbstractString)
     if format == "compressor_performance_map"
         return TabulatedCompressorPerformanceMap
     elseif format == "compressor_nondimensional_performance_map"
-        return NonDimensionalTabulatedCompressorPerformanceMap
+        return NondimensionalPerformanceMap
     end
     error("unsupported compressor map format $(format)")
 end
