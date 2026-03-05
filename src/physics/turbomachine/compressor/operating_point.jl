@@ -152,6 +152,95 @@ function _compressor_flow_bounds(
     return (min(m_surge, m_choke), max(m_surge, m_choke))
 end
 
+function _compressor_condition_diagnostics(
+    map::AbstractCompressorPerformanceMap,
+    omega::Float64,
+    Tt_in::Float64,
+    pt_in::Float64,
+    target_pr::Float64;
+    n_scan::Int=401,
+)
+    domain = performance_map_domain(map, Tt_in, pt_in)
+    flow_range = domain.mdot_flow_range
+    mdot_surge = flow_range.surge(omega)
+    mdot_choke = flow_range.choke(omega)
+    flow_mdot_min = min(mdot_surge, mdot_choke)
+    flow_mdot_max = max(mdot_surge, mdot_choke)
+
+    pr_at = mdot -> begin
+        vals = compressor_performance_map_from_stagnation(map, omega, mdot, Tt_in, pt_in)
+        return vals.PR
+    end
+
+    pr_surge = pr_at(mdot_surge)
+    pr_choke = pr_at(mdot_choke)
+
+    pr_max = -Inf
+    mdot_at_pr_max = NaN
+    root_bracketed_by_scan = false
+    has_prev = false
+    f_prev = NaN
+
+    n_scan_eff = max(n_scan, 5)
+    for mdot in range(flow_mdot_min, flow_mdot_max, length=n_scan_eff)
+        pr = pr_at(mdot)
+        isfinite(pr) || continue
+
+        if pr > pr_max
+            pr_max = pr
+            mdot_at_pr_max = mdot
+        end
+
+        f = pr - target_pr
+        if has_prev && isfinite(f_prev)
+            if f == 0.0 || f_prev == 0.0 || signbit(f) != signbit(f_prev)
+                root_bracketed_by_scan = true
+            end
+        end
+        f_prev = f
+        has_prev = true
+    end
+
+    if !isfinite(pr_max)
+        return (
+            flow_mdot_min=flow_mdot_min,
+            flow_mdot_max=flow_mdot_max,
+            pr_surge=pr_surge,
+            pr_choke=pr_choke,
+            pr_max=NaN,
+            mdot_at_pr_max=NaN,
+            pr_peak_boundary="unknown",
+            target_feasible_by_scan=false,
+            root_bracketed_by_scan=false,
+            infeasibility_hint="no_finite_pr_on_flow_interval",
+        )
+    end
+
+    dist_to_surge = abs(mdot_at_pr_max - mdot_surge)
+    dist_to_choke = abs(mdot_at_pr_max - mdot_choke)
+    pr_peak_boundary = dist_to_surge <= dist_to_choke ? "surge" : "choke"
+    target_feasible_by_scan = (pr_max >= target_pr)
+
+    infeasibility_hint = if target_feasible_by_scan
+        root_bracketed_by_scan ? "target_pr_bracketed" : "target_pr_not_bracketed_possible_tangent"
+    else
+        pr_peak_boundary == "surge" ? "target_pr_above_map_max_near_surge" : "target_pr_above_map_max_near_choke"
+    end
+
+    return (
+        flow_mdot_min=flow_mdot_min,
+        flow_mdot_max=flow_mdot_max,
+        pr_surge=pr_surge,
+        pr_choke=pr_choke,
+        pr_max=pr_max,
+        mdot_at_pr_max=mdot_at_pr_max,
+        pr_peak_boundary=pr_peak_boundary,
+        target_feasible_by_scan=target_feasible_by_scan,
+        root_bracketed_by_scan=root_bracketed_by_scan,
+        infeasibility_hint=infeasibility_hint,
+    )
+end
+
 """
     compressor_pr_roots(map; omega, Tt_in, Pt_in, target_pr, n_scan=401, pr_tol=1e-8, prior_roots=[])
 
@@ -424,7 +513,13 @@ function solve_compressor_operating_sweep(
         diagnostics = NamedTuple[]
         prior_roots = Float64[]
         for omega in omegas
-            flow_lo, flow_hi = _compressor_flow_bounds(map, omega, Tt_in_f, pt_in_f)
+            cond_diag = _compressor_condition_diagnostics(
+                map,
+                omega,
+                Tt_in_f,
+                pt_in_f,
+                target_pr_f,
+            )
             found = _compressor_pr_roots_with_backoff(
                 map,
                 omega,
@@ -452,8 +547,16 @@ function solve_compressor_operating_sweep(
                     achieved_pt_out=found.pt_out,
                     n_target_roots=found.n_target_roots,
                     n_achieved_roots=length(found.roots),
-                    flow_mdot_min=flow_lo,
-                    flow_mdot_max=flow_hi,
+                    flow_mdot_min=cond_diag.flow_mdot_min,
+                    flow_mdot_max=cond_diag.flow_mdot_max,
+                    pr_surge=cond_diag.pr_surge,
+                    pr_choke=cond_diag.pr_choke,
+                    pr_max=cond_diag.pr_max,
+                    mdot_at_pr_max=cond_diag.mdot_at_pr_max,
+                    pr_peak_boundary=cond_diag.pr_peak_boundary,
+                    target_feasible_by_scan=cond_diag.target_feasible_by_scan,
+                    root_bracketed_by_scan=cond_diag.root_bracketed_by_scan,
+                    infeasibility_hint=cond_diag.infeasibility_hint,
                 ),
             )
 
@@ -524,7 +627,13 @@ function solve_compressor_operating_sweep(
     prior_roots = Float64[]
 
     for (i, omega) in enumerate(omegas)
-        flow_lo, flow_hi = _compressor_flow_bounds(map, omega, Tt_in_f, pt_in_f)
+        cond_diag = _compressor_condition_diagnostics(
+            map,
+            omega,
+            Tt_in_f,
+            pt_in_f,
+            target_pr_f,
+        )
         found = _compressor_pr_roots_with_backoff(
             map,
             omega,
@@ -552,8 +661,16 @@ function solve_compressor_operating_sweep(
                 achieved_pt_out=found.pt_out,
                 n_target_roots=found.n_target_roots,
                 n_achieved_roots=length(found.roots),
-                flow_mdot_min=flow_lo,
-                flow_mdot_max=flow_hi,
+                flow_mdot_min=cond_diag.flow_mdot_min,
+                flow_mdot_max=cond_diag.flow_mdot_max,
+                pr_surge=cond_diag.pr_surge,
+                pr_choke=cond_diag.pr_choke,
+                pr_max=cond_diag.pr_max,
+                mdot_at_pr_max=cond_diag.mdot_at_pr_max,
+                pr_peak_boundary=cond_diag.pr_peak_boundary,
+                target_feasible_by_scan=cond_diag.target_feasible_by_scan,
+                root_bracketed_by_scan=cond_diag.root_bracketed_by_scan,
+                infeasibility_hint=cond_diag.infeasibility_hint,
             ),
         )
 

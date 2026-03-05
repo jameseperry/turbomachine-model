@@ -235,7 +235,7 @@ function write_compressor_operating_sweep_csv(
     open(output_path, "w") do io
         println(
             io,
-            "omega_rad_per_s,branch_id,PR,eta,mdot,power_kw,converged,backoff_used,mdot_surge,mdot_choke,surge_margin_kg_per_s,choke_margin_kg_per_s,surge_margin_norm,choke_margin_norm,stall_flag,choke_flag,failure_reason,requested_pr,requested_pt_out_pa,achieved_pr,achieved_pt_out_pa,n_target_roots,n_achieved_roots,flow_mdot_min,flow_mdot_max",
+            "omega_rad_per_s,branch_id,PR,eta,mdot,power_kw,converged,backoff_used,mdot_surge,mdot_choke,surge_margin_kg_per_s,choke_margin_kg_per_s,surge_margin_norm,choke_margin_norm,stall_flag,choke_flag,failure_reason,requested_pr,requested_pt_out_pa,achieved_pr,achieved_pt_out_pa,n_target_roots,n_achieved_roots,flow_mdot_min,flow_mdot_max,pr_surge,pr_choke,pr_max,mdot_at_pr_max,pr_peak_boundary,target_feasible_by_scan,root_bracketed_by_scan,infeasibility_hint",
         )
         if data.mode == :single
             for i in eachindex(data.omegas)
@@ -254,11 +254,19 @@ function write_compressor_operating_sweep_csv(
                         n_achieved_roots=0,
                         flow_mdot_min=NaN,
                         flow_mdot_max=NaN,
+                        pr_surge=NaN,
+                        pr_choke=NaN,
+                        pr_max=NaN,
+                        mdot_at_pr_max=NaN,
+                        pr_peak_boundary="unknown",
+                        target_feasible_by_scan=false,
+                        root_bracketed_by_scan=false,
+                        infeasibility_hint="unknown",
                     ),
                 )
                 println(
                     io,
-                    "$(data.omegas[i]),$branch_id,$(data.prs[i]),$(data.etas[i]),$(data.mdots[i]),$(power_kw),$(data.converged[i]),$(data.backoff_used[i]),$(data.mdot_surge[i]),$(data.mdot_choke[i]),$(data.surge_margin[i]),$(data.choke_margin[i]),$(data.surge_margin_norm[i]),$(data.choke_margin_norm[i]),$(data.stall_flag[i]),$(data.choke_flag[i]),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max)",
+                    "$(data.omegas[i]),$branch_id,$(data.prs[i]),$(data.etas[i]),$(data.mdots[i]),$(power_kw),$(data.converged[i]),$(data.backoff_used[i]),$(data.mdot_surge[i]),$(data.mdot_choke[i]),$(data.surge_margin[i]),$(data.choke_margin[i]),$(data.surge_margin_norm[i]),$(data.choke_margin_norm[i]),$(data.stall_flag[i]),$(data.choke_flag[i]),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max),$(d.pr_surge),$(d.pr_choke),$(d.pr_max),$(d.mdot_at_pr_max),$(d.pr_peak_boundary),$(d.target_feasible_by_scan),$(d.root_bracketed_by_scan),$(d.infeasibility_hint)",
                 )
             end
         else
@@ -277,11 +285,19 @@ function write_compressor_operating_sweep_csv(
                         n_achieved_roots=0,
                         flow_mdot_min=NaN,
                         flow_mdot_max=NaN,
+                        pr_surge=NaN,
+                        pr_choke=NaN,
+                        pr_max=NaN,
+                        mdot_at_pr_max=NaN,
+                        pr_peak_boundary="unknown",
+                        target_feasible_by_scan=false,
+                        root_bracketed_by_scan=false,
+                        infeasibility_hint="unknown",
                     ),
                 )
                 println(
                     io,
-                    "$(r.omega),$(r.branch_id),$(r.PR),$(r.eta),$(r.mdot),$(power_kw),$(r.converged),$(r.backoff_used),$(r.mdot_surge),$(r.mdot_choke),$(r.surge_margin),$(r.choke_margin),$(r.surge_margin_norm),$(r.choke_margin_norm),$(r.stall_flag),$(r.choke_flag),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max)",
+                    "$(r.omega),$(r.branch_id),$(r.PR),$(r.eta),$(r.mdot),$(power_kw),$(r.converged),$(r.backoff_used),$(r.mdot_surge),$(r.mdot_choke),$(r.surge_margin),$(r.choke_margin),$(r.surge_margin_norm),$(r.choke_margin_norm),$(r.stall_flag),$(r.choke_flag),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max),$(d.pr_surge),$(d.pr_choke),$(d.pr_max),$(d.mdot_at_pr_max),$(d.pr_peak_boundary),$(d.target_feasible_by_scan),$(d.root_bracketed_by_scan),$(d.infeasibility_hint)",
                 )
             end
         end
@@ -314,7 +330,7 @@ function print_compressor_operating_sweep_failures(data)
     println("Failed points diagnostics:")
     for d in failures
         println(
-            "  omega=$(d.omega) rad/s, reason=$(d.failure_reason), target_PR=$(d.requested_pr), achieved_PR=$(d.achieved_pr), backoff=$(d.backoff_used), roots(target/achieved)=$(d.n_target_roots)/$(d.n_achieved_roots), flow_bounds=[$(d.flow_mdot_min), $(d.flow_mdot_max)] kg/s",
+            "  omega=$(d.omega) rad/s, reason=$(d.failure_reason), hint=$(d.infeasibility_hint), target_PR=$(d.requested_pr), achieved_PR=$(d.achieved_pr), PR[surge/choke/max]=[$(d.pr_surge), $(d.pr_choke), $(d.pr_max)], mdot_at_PR_max=$(d.mdot_at_pr_max), peak_boundary=$(d.pr_peak_boundary), bracketed=$(d.root_bracketed_by_scan), feasible_by_scan=$(d.target_feasible_by_scan), backoff=$(d.backoff_used), roots(target/achieved)=$(d.n_target_roots)/$(d.n_achieved_roots), flow_bounds=[$(d.flow_mdot_min), $(d.flow_mdot_max)] kg/s",
         )
     end
 end
@@ -340,7 +356,7 @@ function _main(args::Vector{String}=ARGS)
         "--target-pr"
             help = "target compressor pressure ratio Pt_out/Pt_in"
             arg_type = Float64
-            default = 2.0
+            default = 10.0
         "--branch"
             help = "root branch to track: low, high, or all"
             arg_type = String
@@ -395,7 +411,7 @@ function _main(args::Vector{String}=ARGS)
     output_default = "compressor_operating_sweep.png"
     output = something(_parsed_opt(parsed, "output", "output"), output_default)
 
-    target_pr = something(_parsed_opt(parsed, "target_pr", "target-pr"), 2.0)
+    target_pr = something(_parsed_opt(parsed, "target_pr", "target-pr"), 10.0)
     pr_backoff = !something(_parsed_opt(parsed, "disable_pr_backoff", "disable-pr-backoff"), false)
     backoff_min_pt_out = _parsed_opt(parsed, "backoff_min_pt_out", "backoff-min-pt-out")
     backoff_max_pt_out = _parsed_opt(parsed, "backoff_max_pt_out", "backoff-max-pt-out")
