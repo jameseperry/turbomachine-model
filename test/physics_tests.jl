@@ -460,6 +460,77 @@
         @test isapprox(vals_nd_loaded.PR, vals_nd_ref.PR; rtol=1e-12)
         @test isapprox(vals_nd_loaded.eta, vals_nd_ref.eta; rtol=1e-12)
 
+        meanline = TM.demo_compressor_meanline_model()
+        meanline_domain = TM.performance_map_domain(meanline, 300.0, 101_325.0)
+        omega_mid = 0.5 * (meanline_domain.omega[1] + meanline_domain.omega[2])
+        mdot_mid = 0.5 * (
+            meanline_domain.mdot_flow_range.surge(omega_mid) +
+            meanline_domain.mdot_flow_range.choke(omega_mid)
+        )
+        meanline_vals = TM.compressor_performance_map_from_stagnation(
+            meanline,
+            omega_mid,
+            mdot_mid,
+            300.0,
+            101_325.0,
+        )
+        @test isfinite(meanline_vals.PR)
+        @test isfinite(meanline_vals.eta)
+
+        nd_from_meanline = TM.tabulate_compressor_meanline_model(
+            meanline;
+            Tt_in_ref=300.0,
+            Pt_in_ref=101_325.0,
+            n_speed=9,
+            n_flow=11,
+            interpolation=:bilinear,
+        )
+        @test nd_from_meanline isa TM.NonDimensionalTabulatedCompressorPerformanceMap
+        m_grid = U.table_xgrid(nd_from_meanline.pr_map)
+        phi_grid = U.table_ygrid(nd_from_meanline.pr_map)
+        m_sample = m_grid[4]
+        phi_sample = phi_grid[6]
+        first_rotor = findfirst(row -> row.kind == :rotor, meanline.rows)
+        idx_ref = isnothing(first_rotor) ? 1 : first_rotor
+        r_tip_1 = meanline.rows[idx_ref].r_tip
+        r_mean_1 = meanline.rows[idx_ref].r_mean
+        a0 = sqrt(meanline.gamma * meanline.gas_constant * 300.0)
+        rho0 = 101_325.0 / (meanline.gas_constant * 300.0)
+        A_phys_1 = meanline.A_ref * meanline.A_station[1]
+        omega_sample = m_sample * a0 / r_tip_1
+        mdot_sample = phi_sample * abs(omega_sample) * r_mean_1 * rho0 * A_phys_1
+        vals_direct = TM.compressor_performance_map_from_stagnation(
+            meanline,
+            omega_sample,
+            mdot_sample,
+            300.0,
+            101_325.0,
+        )
+        vals_nd_table = TM.compressor_performance_map_from_stagnation(
+            nd_from_meanline,
+            omega_sample,
+            mdot_sample,
+            300.0,
+            101_325.0,
+        )
+        @test isapprox(vals_nd_table.PR, vals_direct.PR; rtol=1e-9)
+        @test isapprox(vals_nd_table.eta, vals_direct.eta; rtol=1e-9)
+
+        meanline_path = tempname() * ".toml"
+        TM.write_toml(meanline, meanline_path)
+        meanline_loaded = TM.read_toml(TM.CompressorMeanlineModel, meanline_path)
+        meanline_generic_loaded = TM.read_performance_map_toml(meanline_path; group="compressor_meanline_model")
+        @test meanline_generic_loaded isa TM.CompressorMeanlineModel
+        meanline_vals_loaded = TM.compressor_performance_map_from_stagnation(
+            meanline_loaded,
+            omega_mid,
+            mdot_mid,
+            300.0,
+            101_325.0,
+        )
+        @test isapprox(meanline_vals_loaded.PR, meanline_vals.PR; rtol=1e-12)
+        @test isapprox(meanline_vals_loaded.eta, meanline_vals.eta; rtol=1e-12)
+
         analytic_generic_loaded = TM.read_performance_map_toml(analytic_map_path)
         @test analytic_generic_loaded isa TM.AnalyticCompressorPerformanceMap
 

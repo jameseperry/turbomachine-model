@@ -7,6 +7,9 @@
 /logs/
 /manifest/
 
+# Tup
+.tup/
+
 # Environments
 Manifest.toml
 
@@ -14,6 +17,3 @@ Manifest.toml
 .DS_Store
 .vscode/
 .idea/
-
-# Project specific
-/test_output/
