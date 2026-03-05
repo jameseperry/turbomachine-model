@@ -6,7 +6,6 @@ using TOML
 
 const _DEFAULT_COMPRESSOR_MAP_TOML_GROUPS = (
     "compressor_map",
-    "compressor_analytic_map",
     "compressor_meanline_model",
 )
 
@@ -27,8 +26,6 @@ function _compressor_map_type_from_format(format::AbstractString)
         return TabulatedCompressorPerformanceMap
     elseif format == "compressor_nondimensional_performance_map"
         return NonDimensionalTabulatedCompressorPerformanceMap
-    elseif format == "compressor_analytic_performance_map"
-        return AnalyticCompressorPerformanceMap
     elseif format == "compressor_meanline_model"
         return CompressorMeanlineModel
     end
@@ -43,7 +40,6 @@ based on the TOML `format` field.
 
 If `group` is omitted (`nothing`), this function probes default groups:
 - `compressor_map`
-- `compressor_analytic_map`
 """
 function read_performance_map_toml(
     path::AbstractString;

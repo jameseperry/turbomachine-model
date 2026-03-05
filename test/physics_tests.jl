@@ -69,17 +69,6 @@
     @test isapprox(cmp_domain.mdot_flow_range.surge(750.0), 12.0; rtol=1e-12)
     @test isapprox(cmp_domain.mdot_flow_range.choke(750.0), 20.0; rtol=1e-12)
 
-    cmp_analytic_demo = TM.demo_analytic_compressor_performance_map()
-    cmp_analytic_domain = TM.performance_map_domain(
-        cmp_analytic_demo,
-        cmp_analytic_demo.Tt_ref,
-        cmp_analytic_demo.Pt_ref,
-    )
-    @test cmp_analytic_domain.omega == (600.0, 1000.0)
-    ms = cmp_analytic_domain.mdot_flow_range.surge(800.0)
-    mc = cmp_analytic_domain.mdot_flow_range.choke(800.0)
-    @test ms < mc
-
     @testset "Compressor Map Coordinate Conversion" begin
         src = TM.demo_tabulated_compressor_performance_map(; interpolation=:bilinear)
 
@@ -374,63 +363,6 @@
     end
 
     @testset "Map IO" begin
-        analytic_demo = TM.demo_analytic_compressor_performance_map()
-        @test analytic_demo isa TM.AnalyticCompressorPerformanceMap{Float64}
-        spec_demo = TM.demo_compressor_spec()
-        @test spec_demo isa TM.CompressorSpec{Float64}
-        design_demo = TM.demo_compressor_design()
-        @test design_demo isa TM.CompressorDesign{Float64}
-
-        analytic_map = TM.AnalyticCompressorPerformanceMap{Float64}(
-            Pi_max=1.75,
-            pr_speed_exp=2.25,
-            eta_max=0.90,
-            Tt_ref=300.0,
-            Pt_ref=95_000.0,
-        )
-        analytic_map_path = tempname() * ".toml"
-        TM.write_toml(analytic_map, analytic_map_path)
-        analytic_map_loaded = TM.read_toml(TM.AnalyticCompressorPerformanceMap, analytic_map_path)
-        for field in fieldnames(TM.AnalyticCompressorPerformanceMap{Float64})
-            @test isapprox(getfield(analytic_map_loaded, field), getfield(analytic_map, field); rtol=1e-12)
-        end
-
-        spec = TM.CompressorSpec(
-            pr_design=4.0,
-            eta_design=0.86,
-            flow_range=0.45,
-            surge_margin=0.62,
-            choke_sharpness=0.35,
-            speed_sensitivity=0.70,
-        )
-        spec_path = tempname() * ".toml"
-        TM.write_toml(spec, spec_path)
-        spec_loaded = TM.read_toml(TM.CompressorSpec, spec_path)
-        for field in fieldnames(TM.CompressorSpec{Float64})
-            @test isapprox(getfield(spec_loaded, field), getfield(spec, field); rtol=1e-12)
-        end
-
-        design = TM.CompressorDesign(
-            kind=:centrifugal,
-            stage_count=1,
-            stage_loading=0.65,
-            tip_mach_design=0.75,
-            diffusion_aggressiveness=0.45,
-            clearance_fraction=0.15,
-            diffuser_quality=0.72,
-            variable_geometry=0.10,
-            reynolds_quality=0.88,
-        )
-        design_path = tempname() * ".toml"
-        TM.write_toml(design, design_path)
-        design_loaded = TM.read_toml(TM.CompressorDesign, design_path)
-        @test design_loaded.kind == design.kind
-        @test design_loaded.stage_count == design.stage_count
-        for field in fieldnames(TM.CompressorDesign{Float64})
-            field in (:kind, :stage_count) && continue
-            @test isapprox(getfield(design_loaded, field), getfield(design, field); rtol=1e-12)
-        end
-
         table_map_toml_path = tempname() * ".toml"
         U.write_toml(pm.pr_map, table_map_toml_path)
         table_map_toml_loaded = U.read_toml(U.AbstractTableMap, table_map_toml_path)
@@ -530,9 +462,6 @@
         )
         @test isapprox(meanline_vals_loaded.PR, meanline_vals.PR; rtol=1e-12)
         @test isapprox(meanline_vals_loaded.eta, meanline_vals.eta; rtol=1e-12)
-
-        analytic_generic_loaded = TM.read_performance_map_toml(analytic_map_path)
-        @test analytic_generic_loaded isa TM.AnalyticCompressorPerformanceMap
 
         turbine_map = TT.TabulatedTurbinePerformanceMap(
             300.0,

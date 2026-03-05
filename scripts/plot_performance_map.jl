@@ -16,7 +16,7 @@ function _infer_format(path::AbstractString)
     error("unsupported map extension $(ext) for path $(path); expected .toml")
 end
 
-_default_groups(::Val{:compressor}) = ("compressor_map", "compressor_analytic_map")
+_default_groups(::Val{:compressor}) = ("compressor_map",)
 _default_groups(::Val{:turbine}) = ("turbine_map",)
 
 function _read_map(
