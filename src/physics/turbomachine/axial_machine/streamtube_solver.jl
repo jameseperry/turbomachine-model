@@ -1,5 +1,24 @@
 using ....Utility: bracket_bisect_roots
 
+function _invalid_streamtube_result(n_rows::Int; stall::Bool, choke::Bool, mu::Float64=NaN)
+    n_stations = n_rows + 1
+    return (
+        PR=NaN,
+        eta=NaN,
+        stall=stall,
+        choke=choke,
+        valid=false,
+        mu=mu,
+        tau=fill(NaN, n_stations),
+        pi=fill(NaN, n_stations),
+        nu_theta=fill(NaN, n_stations),
+        nu_x=fill(NaN, n_stations),
+        stall_row=falses(n_rows),
+        choke_row=falses(n_rows),
+        valid_row=trues(n_rows),
+    )
+end
+
 function _mass_flow_invariant(
     gamma::Real,
     pi::Real,
@@ -42,29 +61,80 @@ function _solve_station_nu_x(
     return (converged=true, nu_x=nu_x)
 end
 
-function _invalid_streamtube_result(n_rows::Int; stall::Bool, choke::Bool, mu::Float64=NaN)
-    n_stations = n_rows + 1
-    return (
-        PR=NaN,
-        eta=NaN,
-        stall=stall,
-        choke=choke,
-        valid=false,
-        mu=mu,
-        tau=fill(NaN, n_stations),
-        pi=fill(NaN, n_stations),
-        nu_theta=fill(NaN, n_stations),
-        nu_x=fill(NaN, n_stations),
-        stall_row=falses(n_rows),
-        choke_row=falses(n_rows),
-        valid_row=trues(n_rows),
+function _solve_row_nu_x(
+    model::AxialMachineModel,
+    station_in::Int,
+    station_out::Int,
+    mu::Float64,
+    tau::Vector{Float64},
+    pi::Vector{Float64},
+    nu_theta::Vector{Float64},
+    nu_u::Float64,
+    k_theta_exit::Float64,
+    delta_s_hat::Float64,
+    prefer_root::Symbol,
+)
+    gamma_ratio = model.gamma / (model.gamma - 1)
+    mu_residual = function (nu_x_out)
+        nu_theta_out = nu_u + nu_x_out * k_theta_exit
+        tau_out = tau[station_in] + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta[station_in])
+        tau_out > 0 || return NaN
+        pi_out = pi[station_in] * (tau_out / tau[station_in])^gamma_ratio *
+                 exp(-gamma_ratio * delta_s_hat)
+        mu_at_nu_x = _mass_flow_invariant(
+            model.gamma,
+            pi_out,
+            station_area(model, station_out),
+            tau_out,
+            nu_x_out,
+            nu_theta_out,
+        )
+        return mu - mu_at_nu_x
+    end
+
+    roots = bracket_bisect_roots(
+        mu_residual,
+        (1e-10, 2.5);
+        n_scan=201,
+        root_tol=1e-10,
+        max_bisect_iters=80,
+        dedupe_atol=1e-8,
     )
+    isempty(roots) && return (converged=false, choke=true, nu_x=NaN)
+    nu_x = prefer_root == :high ? last(roots) : first(roots)
+    return (converged=true, choke=false, nu_x=nu_x)
 end
 
+"""
+    _advance_row!(model, row, aero, row_radius, station_in, station_out, mu, tau, pi, nu_theta, nu_x, m_tip, prefer_root)
+
+Advance one blade row from `station_in` to `station_out` in non-dimensional form.
+
+Key state variables and physical interpretation:
+- `nu_x`: axial velocity non-dimensionalized by reference inlet acoustic speed
+  (`nu_x = V_x / a0_ref`), stored per station.
+- `nu_theta`: tangential (swirl) velocity in the same scaling
+  (`nu_theta = V_theta / a0_ref`), stored per station.
+- `nu_u`: blade speed at this row/radius in the same scaling
+  (`nu_u = U / a0_ref`). For stators, `speed_ratio_to_ref = 0`, so `nu_u = 0`.
+- `tau`: non-dimensional total enthalpy / temperature-like state
+  (`tau = h_t / h_t_ref` for this ideal-gas closure), stored per station.
+- `pi`: non-dimensional total pressure ratio state (`pi = p_t / p_t_ref`),
+  stored per station.
+- `mu`: mass-flow invariant used by continuity closure. At each stage update we
+  solve for `nu_x_out` such that this invariant is preserved.
+- `m_tip`: reference rotor-tip speed parameter (`m_tip = omega_ref * r_tip_ref / a0_ref`),
+  used to build row-local blade speed via `speed_ratio_to_ref` and `row_radius`.
+
+Behavior:
+- Calls `blade_aero` to get turning and loss for the row.
+- Solves a scalar continuity residual for `nu_x_out` at the row exit.
+- Updates `nu_theta`, `tau`, and `pi`; stator behavior is the `nu_u = 0` special case.
+"""
 function _advance_row!(
     model::AxialMachineModel,
     row::AxialRow,
-    aero::RotorAeroModel,
+    aero::BladeAeroModel,
     row_radius::Float64,
     station_in::Int,
     station_out::Int,
@@ -76,48 +146,41 @@ function _advance_row!(
     m_tip::Float64,
     prefer_root::Symbol,
 )
-    row.kind == :rotor || error("_advance_row! rotor method requires row.kind == :rotor")
+    # nu_u is the blade-relative tangential velocity non-dimensionalized by the reference tip speed.
+    # For stators, speed_ratio_to_ref = 0, so nu_u = 0 and the blade-relative flow angle is the same as the absolute flow angle.
     nu_u = row.speed_ratio_to_ref * m_tip * row_radius / model.r_tip_ref
-    aero_out = row_aero(aero, nu_x[station_in], nu_theta[station_in], nu_u)
+    
+    # Compute blade aerodynamics given flow velocity components and blade speed.
+    aero_out = blade_aero(aero, nu_x[station_in], nu_theta[station_in], nu_u)
     stall = (aero_out.stall_margin <= 0) || !aero_out.valid
     aero_out.valid || return (converged=false, choke=false, stall=stall)
 
-    gamma_ratio = model.gamma / (model.gamma - 1)
-    mu_residual = function (nu_x_out)
-        nu_theta_out = nu_u + nu_x_out * aero_out.k_theta_exit
-        tau_out = tau[station_in] + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta[station_in])
-        tau_out > 0 || return NaN
-        pi_out = pi[station_in] * (tau_out / tau[station_in])^gamma_ratio *
-                 exp(-gamma_ratio * aero_out.delta_s_hat)
-        mu_at_nu_x = _mass_flow_invariant(
-            model.gamma,
-            pi_out,
-            station_area(model, station_out),
-            tau_out,
-            nu_x_out,
-            nu_theta_out,
-        )
-        return mu - mu_at_nu_x
-    end
-
-    roots = bracket_bisect_roots(
-        mu_residual,
-        (1e-10, 2.5);
-        n_scan=201,
-        root_tol=1e-10,
-        max_bisect_iters=80,
-        dedupe_atol=1e-8,
+    # Compute nu_x at the row exit from blade aerodynamics and mass flow constraint.
+    nu_x_solve = _solve_row_nu_x(
+        model,
+        station_in,
+        station_out,
+        mu,
+        tau,
+        pi,
+        nu_theta,
+        nu_u,
+        Float64(aero_out.k_theta_exit),
+        Float64(aero_out.delta_s_hat),
+        prefer_root,
     )
-    isempty(roots) && return (converged=false, choke=true, stall=stall)
-    nu_x_out = prefer_root == :high ? last(roots) : first(roots)
+    nu_x_solve.converged || return (converged=false, choke=nu_x_solve.choke, stall=stall)
+    nu_x_out = nu_x_solve.nu_x
 
+    # Calculate incrase in enthalpy
+    gamma_ratio = model.gamma / (model.gamma - 1)
     nu_theta_out = nu_u + nu_x_out * aero_out.k_theta_exit
     tau_out = tau[station_in] + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta[station_in])
     tau_out > 0 || return (converged=false, choke=false, stall=stall)
 
-    pi_out = pi[station_in] *
-             (tau_out / tau[station_in])^gamma_ratio *
-             exp(-gamma_ratio * aero_out.delta_s_hat)
+    # Calculate increase in pressure ratio
+    pi_out = (tau_out / tau[station_in])^gamma_ratio *
+             pi[station_in] * exp(-gamma_ratio * aero_out.delta_s_hat)
 
     nu_theta[station_out] = nu_theta_out
     tau[station_out] = tau_out
@@ -126,74 +189,33 @@ function _advance_row!(
     return (converged=true, choke=false, stall=stall)
 end
 
-function _advance_row!(
-    model::AxialMachineModel,
-    row::AxialRow,
-    aero::StatorAeroModel,
-    _row_radius::Float64,
-    station_in::Int,
-    station_out::Int,
-    mu::Float64,
-    tau::Vector{Float64},
-    pi::Vector{Float64},
-    nu_theta::Vector{Float64},
-    nu_x::Vector{Float64},
-    _m_tip::Float64,
-    prefer_root::Symbol,
-)
-    row.kind == :stator || error("_advance_row! stator method requires row.kind == :stator")
-    aero_out = row_aero(aero, nu_x[station_in], nu_theta[station_in], 0.0)
-    stall = (aero_out.stall_margin <= 0) || !aero_out.valid
-    aero_out.valid || return (converged=false, choke=false, stall=stall)
-
-    gamma_ratio = model.gamma / (model.gamma - 1)
-    mu_residual = function (nu_x_out)
-        nu_theta_out = nu_x_out * aero_out.k_theta_exit
-        tau_out = tau[station_in]
-        pi_out = pi[station_in] * exp(-gamma_ratio * aero_out.delta_s_hat)
-        mu_at_nu_x = _mass_flow_invariant(
-            model.gamma,
-            pi_out,
-            station_area(model, station_out),
-            tau_out,
-            nu_x_out,
-            nu_theta_out,
-        )
-        return mu - mu_at_nu_x
-    end
-
-    roots = bracket_bisect_roots(
-        mu_residual,
-        (1e-10, 2.5);
-        n_scan=201,
-        root_tol=1e-10,
-        max_bisect_iters=80,
-        dedupe_atol=1e-8,
-    )
-    isempty(roots) && return (converged=false, choke=true, stall=stall)
-    nu_x_out = prefer_root == :high ? last(roots) : first(roots)
-
-    nu_theta[station_out] = nu_x_out * aero_out.k_theta_exit
-    tau[station_out] = tau[station_in]
-    pi[station_out] = pi[station_in] * exp(-gamma_ratio * aero_out.delta_s_hat)
-    nu_x[station_out] = nu_x_out
-    return (converged=true, choke=false, stall=stall)
-end
-
-function _nu_u_inlet_reference(
-    model::AxialMachineModel,
-    streamtube_radii::AbstractVector{<:Real},
-    m_tip::Float64,
-)
-    idx_ref = model.first_rotor_index
-    row_ref = model.rows[idx_ref]
-    return row_ref.speed_ratio_to_ref * m_tip * Float64(streamtube_radii[idx_ref]) / model.r_tip_ref
-end
-
 """
     streamtube_solve(model, streamtube_radii, m_tip, nu_x_inlet, nu_theta_inlet; prefer_root=:low)
 
 Run the axial row-marching solve in non-dimensional coordinates.
+
+Coordinate/scaling convention:
+- All velocity-like terms are normalized by `a0_ref` (reference inlet acoustic speed).
+  - `nu_x = V_x / a0_ref` (axial component)
+  - `nu_theta = V_theta / a0_ref` (tangential/swirl component)
+  - `nu_u = U / a0_ref` (blade speed, row-dependent)
+- Thermodynamic station states are represented by:
+  - `tau` (non-dimensional total enthalpy/temperature-like state)
+  - `pi` (non-dimensional total pressure ratio state)
+- `mu` is a non-dimensional mass-flow invariant derived from continuity.
+
+Inputs:
+- `model`: row stack plus gas constants and reference geometry.
+- `streamtube_radii[k]`: physical radius used for row `k`; must lie in that row's
+  `[r_hub, r_tip]`.
+- `m_tip`: reference-speed parameter driving row blade speeds.
+- `nu_x_inlet`, `nu_theta_inlet`: inlet station velocity components in normalized units.
+- `prefer_root`: selects lower or upper branch when scalar continuity has multiple roots.
+
+Outputs include:
+- `PR`: outlet-to-inlet total pressure ratio (`pi_out`)
+- `eta`: total-to-total efficiency proxy from `(pi_out, tau_out)`
+- full station arrays (`tau`, `pi`, `nu_theta`, `nu_x`) and row diagnostics.
 """
 function streamtube_solve(
     model::AxialMachineModel,
@@ -336,7 +358,13 @@ function streamtube_solve_with_phi(
 )
     m_tip_f = Float64(m_tip)
     phi_in_f = Float64(phi_in)
-    nu_u_ref = _nu_u_inlet_reference(model, streamtube_radii, m_tip_f)
+    # The phi wrapper uses the first-rotor reference speed at the chosen streamtube
+    # radius to map flow coefficient to inlet axial velocity:
+    #   phi_in = nu_x_inlet / |nu_u_ref|  =>  nu_x_inlet = phi_in * |nu_u_ref|
+    # where nu_u_ref is the non-dimensional blade speed of the reference rotor row.
+    idx_ref = model.first_rotor_index
+    row_ref = model.rows[idx_ref]
+    nu_u_ref = row_ref.speed_ratio_to_ref * m_tip_f * Float64(streamtube_radii[idx_ref]) / model.r_tip_ref
     abs(nu_u_ref) > 0 || return _invalid_streamtube_result(length(model.rows); stall=true, choke=true)
     nu_x_inlet = phi_in_f * abs(nu_u_ref)
     return streamtube_solve(

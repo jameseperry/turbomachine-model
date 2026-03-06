@@ -1,23 +1,18 @@
 JULIA ?= julia --project=..
 SCRIPTS := ../scripts
-INTERPOLATIONS := bilinear bicubic
+MAP_VARIANTS := dim/bilinear dim/bicubic nd/bilinear nd/bicubic
 
-MEANLINE_TOMLS := $(wildcard compressor/meanline/*.toml)
-MEANLINE_TOMLS += compressor/meanline/demo_compressor_meanline_model.toml
+USER_MEANLINE_TOMLS := $(wildcard compressor/meanline/*.toml)
+USER_MAP_TOMLS := $(wildcard compressor/map/*/*/*.toml)
 
-DIM_MAP_TOMLS := $(wildcard compressor/map/dim/*/*.toml)
-ND_MAP_TOMLS := $(wildcard compressor/map/nd/*/*.toml)
+GENERATED_MEANLINE_TOMLS := compressor/meanline/demo_compressor_meanline_model.toml
+GENERATED_MAP_TOMLS := $(foreach variant,$(MAP_VARIANTS),$(patsubst compressor/meanline/%.toml,compressor/map/$(variant)/%.toml,$(GENERATED_MEANLINE_TOMLS)))
 
-MEANLINE_ND_MAPS := $(foreach interp,$(INTERPOLATIONS),$(patsubst compressor/meanline/%.toml,compressor/map/nd/$(interp)/%.toml,$(MEANLINE_TOMLS)))
-MEANLINE_DIM_MAPS := $(foreach interp,$(INTERPOLATIONS),$(patsubst compressor/meanline/%.toml,compressor/map/dim/$(interp)/%.toml,$(MEANLINE_TOMLS)))
-
-ALL_DIM_MAP_TOMLS := $(sort $(DIM_MAP_TOMLS) $(MEANLINE_DIM_MAPS))
-ALL_ND_MAP_TOMLS := $(sort $(ND_MAP_TOMLS) $(MEANLINE_ND_MAPS))
-
-ALL_MAP_TOMLS := $(sort $(ALL_DIM_MAP_TOMLS) $(ALL_ND_MAP_TOMLS))
+ALL_MAP_TOMLS := $(sort $(USER_MAP_TOMLS) $(GENERATED_MAP_TOMLS))
 
 PERFORMANCE_MAP_PLOTS := $(ALL_MAP_TOMLS:.toml=_performance_map.png)
 OPERATING_SWEEP_PLOTS := $(ALL_MAP_TOMLS:.toml=_operating_sweep.png)
+OPERATING_SWEEP_CSV := $(ALL_MAP_TOMLS:.toml=_operating_sweep.csv)
 
 .PHONY: all plots sweeps clean
 
@@ -27,7 +22,7 @@ plots: $(PERFORMANCE_MAP_PLOTS)
 
 sweeps: $(OPERATING_SWEEP_PLOTS)
 
-compressor/meanline/demo_compressor_meanline_model.toml:
+compressor/meanline/demo_compressor_meanline_model.toml: $(SCRIPTS)/create_demo_object.jl
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_meanline_model $@
 
@@ -56,4 +51,4 @@ compressor/map/dim/bicubic/%.toml: compressor/meanline/%.toml
 	$(JULIA) $(SCRIPTS)/plot_compressor_operating_sweep.jl $< --target-pr 10.0 --branch all --csv $*_operating_sweep.csv --output $@
 
 clean:
-	rm -f $(MEANLINE_ND_MAPS) $(PERFORMANCE_MAP_PLOTS) $(OPERATING_SWEEP_PLOTS)
+	rm -f $(GENERATED_MEANLINE_TOMLS) $(GENERATED_MAP_TOMLS) $(PERFORMANCE_MAP_PLOTS) $(OPERATING_SWEEP_PLOTS) $(OPERATING_SWEEP_CSV)

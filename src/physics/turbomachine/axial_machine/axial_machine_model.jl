@@ -4,17 +4,17 @@ Axial row descriptor.
 Field meanings:
 - `kind`: row category (`:rotor` or `:stator`) used for validation and
   interpretation of kinematics.
-- `aero`: aerodynamic closure model for this row (`RotorAeroModel` or
-  `StatorAeroModel`) that maps inlet flow state to turning/loss outputs.
+- `aero`: aerodynamic closure model for this row (`BladeAeroModel`) that maps
+  inlet flow state to turning/loss outputs.
 - `r_hub`: hub radius [m] of the annulus represented by this row.
 - `r_tip`: tip radius [m] for this row.
 - `speed_ratio_to_ref`: row shaft speed divided by the reference shaft speed
   (`omega_row / omega_ref`). Use `0.0` for stators, negative values for
   counter-rotation, and values with magnitude > 1 for geared-up rows.
 """
-struct AxialRow{M<:AbstractRowAeroModel}
+struct AxialRow
     kind::Symbol
-    aero::M
+    aero::BladeAeroModel
     r_hub::Float64
     r_tip::Float64
     speed_ratio_to_ref::Float64
@@ -22,7 +22,7 @@ end
 
 function AxialRow(
     kind::Symbol,
-    aero::AbstractRowAeroModel,
+    aero::BladeAeroModel,
     r_hub::Real,
     r_tip::Real,
     speed_ratio_to_ref::Real,
@@ -34,12 +34,10 @@ function AxialRow(
     speed_ratio = Float64(speed_ratio_to_ref)
     if kind == :rotor
         speed_ratio != 0.0 || error("rotor speed_ratio_to_ref must be nonzero")
-        aero isa RotorAeroModel || error("rotor rows require RotorAeroModel")
     else
         speed_ratio == 0.0 || error("stator speed_ratio_to_ref must be 0.0")
-        aero isa StatorAeroModel || error("stator rows require StatorAeroModel")
     end
-    return AxialRow{typeof(aero)}(
+    return AxialRow(
         kind,
         aero,
         Float64(r_hub),

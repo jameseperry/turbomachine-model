@@ -1,24 +1,11 @@
 using TOML
 import ....Utility: write_toml, read_toml
 
-function _aero_to_toml_dict(model::RotorAeroModel)
+function _aero_to_toml_dict(model::BladeAeroModel)
     return Dict{String,Any}(
-        "format" => "rotor_aero_model",
-        "beta_ref" => Float64(model.beta_ref),
-        "beta_incidence_sensitivity" => Float64(model.beta_incidence_sensitivity),
-        "loss_base" => Float64(model.loss_base),
-        "loss_incidence" => Float64(model.loss_incidence),
-        "stall_incidence_limit" => Float64(model.stall_incidence_limit),
-        "k_theta_min" => Float64(model.k_theta_min),
-        "k_theta_max" => Float64(model.k_theta_max),
-    )
-end
-
-function _aero_to_toml_dict(model::StatorAeroModel)
-    return Dict{String,Any}(
-        "format" => "stator_aero_model",
-        "alpha_ref" => Float64(model.alpha_ref),
-        "alpha_incidence_sensitivity" => Float64(model.alpha_incidence_sensitivity),
+        "format" => "blade_aero_model",
+        "theta_ref" => Float64(model.theta_ref),
+        "theta_incidence_sensitivity" => Float64(model.theta_incidence_sensitivity),
         "loss_base" => Float64(model.loss_base),
         "loss_incidence" => Float64(model.loss_incidence),
         "stall_incidence_limit" => Float64(model.stall_incidence_limit),
@@ -30,25 +17,15 @@ end
 function _aero_from_toml_dict(data::Dict{String,Any})
     haskey(data, "format") || error("aero model missing format")
     fmt = String(data["format"])
-    if fmt == "rotor_aero_model"
-        return RotorAeroModel{Float64}(
-            beta_ref=Float64(data["beta_ref"]),
-            beta_incidence_sensitivity=Float64(data["beta_incidence_sensitivity"]),
-            loss_base=Float64(data["loss_base"]),
-            loss_incidence=Float64(data["loss_incidence"]),
-            stall_incidence_limit=Float64(data["stall_incidence_limit"]),
-            k_theta_min=Float64(data["k_theta_min"]),
-            k_theta_max=Float64(data["k_theta_max"]),
-        )
-    elseif fmt == "stator_aero_model"
-        return StatorAeroModel{Float64}(
-            alpha_ref=Float64(data["alpha_ref"]),
-            alpha_incidence_sensitivity=Float64(data["alpha_incidence_sensitivity"]),
-            loss_base=Float64(data["loss_base"]),
-            loss_incidence=Float64(data["loss_incidence"]),
-            stall_incidence_limit=Float64(data["stall_incidence_limit"]),
-            k_theta_min=Float64(data["k_theta_min"]),
-            k_theta_max=Float64(data["k_theta_max"]),
+    if fmt == "blade_aero_model"
+        return BladeAeroModel{Float64}(
+            Float64(data["theta_ref"]),
+            Float64(data["theta_incidence_sensitivity"]),
+            Float64(data["loss_base"]),
+            Float64(data["loss_incidence"]),
+            Float64(data["stall_incidence_limit"]),
+            Float64(data["k_theta_min"]),
+            Float64(data["k_theta_max"]),
         )
     end
     error("unsupported aero model format=$(fmt)")
@@ -115,7 +92,7 @@ function write_toml(
     data = Dict{String,Any}()
     node = _find_or_create_axial_group!(data, group)
     node["format"] = "compressor_meanline_model"
-    node["format_version"] = 2
+    node["format_version"] = 3
     node["gamma"] = model.gamma
     node["gas_constant"] = model.gas_constant
     node["r_tip_ref"] = model.r_tip_ref
@@ -152,13 +129,13 @@ end
 """
 Demo axial-machine model for development/testing.
 """
-function demo_axial_machine_model()
+function demo_axial_compressor_model()
     rows = AxialRow[
         AxialRow(
             :rotor,
-            RotorAeroModel{Float64}(
-                beta_ref=-0.55,
-                beta_incidence_sensitivity=0.62,
+            rotor_aero_model(
+                theta_ref=-0.55,
+                theta_incidence_sensitivity=0.62,
                 loss_base=0.0025,
                 loss_incidence=0.045,
                 stall_incidence_limit=0.36,
@@ -171,9 +148,9 @@ function demo_axial_machine_model()
         ),
         AxialRow(
             :stator,
-            StatorAeroModel{Float64}(
-                alpha_ref=0.45,
-                alpha_incidence_sensitivity=0.70,
+            stator_aero_model(
+                theta_ref=0.45,
+                theta_incidence_sensitivity=0.70,
                 loss_base=0.0018,
                 loss_incidence=0.030,
                 stall_incidence_limit=0.34,
@@ -186,9 +163,9 @@ function demo_axial_machine_model()
         ),
         AxialRow(
             :rotor,
-            RotorAeroModel{Float64}(
-                beta_ref=-0.50,
-                beta_incidence_sensitivity=0.60,
+            rotor_aero_model(
+                theta_ref=-0.50,
+                theta_incidence_sensitivity=0.60,
                 loss_base=0.0030,
                 loss_incidence=0.050,
                 stall_incidence_limit=0.34,
@@ -201,9 +178,9 @@ function demo_axial_machine_model()
         ),
         AxialRow(
             :stator,
-            StatorAeroModel{Float64}(
-                alpha_ref=0.45,
-                alpha_incidence_sensitivity=0.70,
+            stator_aero_model(
+                theta_ref=0.45,
+                theta_incidence_sensitivity=0.70,
                 loss_base=0.0020,
                 loss_incidence=0.032,
                 stall_incidence_limit=0.34,

@@ -294,4 +294,4 @@ end
 """
 Demo compressor meanline model for development/testing.
 """
-demo_compressor_meanline_model() = AxialMachine.demo_axial_machine_model()
+demo_compressor_meanline_model() = AxialMachine.demo_axial_compressor_model()
