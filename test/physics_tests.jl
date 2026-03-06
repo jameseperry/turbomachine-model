@@ -36,6 +36,32 @@
     vals = TM.performance_from_stagnation(pm, 1.5, 15.0, 300.0, 100_000.0)
     @test isapprox(vals.PR, 3.5; rtol=1e-12)
     @test isapprox(vals.eta, 0.86; rtol=1e-12)
+    @test vals.valid
+    @test !vals.stall
+    @test !vals.choke
+
+    pm_limited = TM.TabulatedCompressorPerformanceMap(
+        300.0,
+        100_000.0,
+        [1.0, 2.0],
+        [10.0, 20.0],
+        [2.0 3.0; 4.0 5.0],
+        [0.8 0.82; 0.9 0.92];
+        interpolation=:bilinear,
+        mdot_corr_surge=[12.0, 14.0],
+        mdot_corr_choke=[18.0, 19.0],
+    )
+    vals_stall = TM.performance_from_stagnation(pm_limited, 1.5, 12.0, 300.0, 100_000.0)
+    vals_choke = TM.performance_from_stagnation(pm_limited, 1.5, 19.0, 300.0, 100_000.0)
+    vals_mid = TM.performance_from_stagnation(pm_limited, 1.5, 15.5, 300.0, 100_000.0)
+    @test vals_stall.stall
+    @test !vals_stall.valid
+    @test vals_choke.choke
+    @test !vals_choke.valid
+    @test vals_mid.valid
+    pm_limited_domain = TM.performance_map_domain(pm_limited, 300.0, 100_000.0)
+    @test isapprox(pm_limited_domain.mdot_flow_range.surge(1.5), 13.0; rtol=1e-12)
+    @test isapprox(pm_limited_domain.mdot_flow_range.choke(1.5), 18.5; rtol=1e-12)
 
     pm_bicubic = TM.TabulatedCompressorPerformanceMap(
         300.0,
@@ -128,6 +154,9 @@
         src_grid_vals = TM.performance_from_stagnation(src, 800.0, 16.0, Tt_ref, Pt_ref)
         @test isapprox(back_vals.PR, src_grid_vals.PR; rtol=1e-10)
         @test isapprox(back_vals.eta, src_grid_vals.eta; rtol=1e-10)
+        back_domain = TM.performance_map_domain(back, Tt_ref, Pt_ref)
+        @test isapprox(back_domain.mdot_flow_range.surge(800.0), 12.0; rtol=1e-10)
+        @test isapprox(back_domain.mdot_flow_range.choke(800.0), 20.0; rtol=1e-10)
     end
 
     @testset "Turbomachine Residuals" begin
@@ -410,7 +439,7 @@
             )
             @test AM.station_area(meanline, 2) ≈ expected_a2
         end
-        meanline_vals = AM.streamtube_solve(meanline, m_mid, phi_mid)
+        meanline_vals = AM.streamtube_solve_with_phi(meanline, m_mid, phi_mid)
         @test isfinite(meanline_vals.PR)
         @test isfinite(meanline_vals.eta)
         first_rotor = findfirst(row -> row.kind == :rotor, meanline.rows)
@@ -441,7 +470,7 @@
         A_phys_1 = AM.station_area(meanline, 1)
         omega_sample = m_sample * a0 / r_tip_1
         mdot_sample = phi_sample * abs(omega_sample) * r_mean_1 * rho0 * A_phys_1
-        vals_direct = AM.streamtube_solve(
+        vals_direct = AM.streamtube_solve_with_phi(
             meanline,
             m_sample,
             phi_sample,
@@ -460,7 +489,7 @@
         TM.write_toml(meanline, meanline_path)
         meanline_loaded = TM.read_toml(TM.CompressorMeanlineModel, meanline_path)
         @test_throws ErrorException TM.read_performance_map_toml(meanline_path; group="compressor_meanline_model")
-        meanline_vals_loaded = AM.streamtube_solve(meanline_loaded, m_mid, phi_mid)
+        meanline_vals_loaded = AM.streamtube_solve_with_phi(meanline_loaded, m_mid, phi_mid)
         @test isapprox(meanline_vals_loaded.PR, meanline_vals.PR; rtol=1e-12)
         @test isapprox(meanline_vals_loaded.eta, meanline_vals.eta; rtol=1e-12)
 

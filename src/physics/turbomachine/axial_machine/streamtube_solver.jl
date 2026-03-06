@@ -322,11 +322,11 @@ function streamtube_solve(
 end
 
 """
-    streamtube_solve(model, m_tip, phi_in; streamtube_radii=meanline_radii(model), nu_theta_inlet=0.0, prefer_root=:low)
+    streamtube_solve_with_phi(model, m_tip, phi_in; streamtube_radii=meanline_radii(model), nu_theta_inlet=0.0, prefer_root=:low)
 
 Phi-facing convenience wrapper around the nu_x-native solver.
 """
-function streamtube_solve(
+function streamtube_solve_with_phi(
     model::AxialMachineModel,
     m_tip::Real,
     phi_in::Real;
@@ -386,7 +386,7 @@ function sample_streamtube_solve(
             if has_limits
                 flow = clamp(flow, Float64(flow_min[i]), Float64(flow_max[i]))
             end
-            vals = streamtube_solve(
+            vals = streamtube_solve_with_phi(
                 model,
                 speed,
                 flow;

@@ -21,6 +21,36 @@ struct TabulatedCompressorPerformanceMap{M<:AbstractTableMap} <: AbstractCompres
     Pt_ref::Float64
     pr_map::M
     eta_map::M
+    mdot_corr_surge::Vector{Float64}
+    mdot_corr_choke::Vector{Float64}
+end
+
+function TabulatedCompressorPerformanceMap(
+    Tt_ref::Real,
+    Pt_ref::Real,
+    pr_map::M,
+    eta_map::M,
+    mdot_corr_surge::Vector{<:Real},
+    mdot_corr_choke::Vector{<:Real},
+) where {M<:AbstractTableMap}
+    Tt_ref > 0 || error("Tt_ref must be > 0")
+    Pt_ref > 0 || error("Pt_ref must be > 0")
+    table_xgrid(pr_map) == table_xgrid(eta_map) || error("pr_map/eta_map x grids must match")
+    table_ygrid(pr_map) == table_ygrid(eta_map) || error("pr_map/eta_map y grids must match")
+    xgrid = table_xgrid(pr_map)
+    length(mdot_corr_surge) == length(xgrid) || error("mdot_corr_surge length must match omega grid length")
+    length(mdot_corr_choke) == length(xgrid) || error("mdot_corr_choke length must match omega grid length")
+    surge = Float64.(mdot_corr_surge)
+    choke = Float64.(mdot_corr_choke)
+    all(surge .<= choke) || error("mdot_corr_surge must be <= mdot_corr_choke at every omega grid point")
+    return TabulatedCompressorPerformanceMap(
+        Float64(Tt_ref),
+        Float64(Pt_ref),
+        pr_map,
+        eta_map,
+        surge,
+        choke,
+    )
 end
 
 function TabulatedCompressorPerformanceMap(
@@ -29,11 +59,18 @@ function TabulatedCompressorPerformanceMap(
     pr_map::M,
     eta_map::M,
 ) where {M<:AbstractTableMap}
-    Tt_ref > 0 || error("Tt_ref must be > 0")
-    Pt_ref > 0 || error("Pt_ref must be > 0")
-    table_xgrid(pr_map) == table_xgrid(eta_map) || error("pr_map/eta_map x grids must match")
-    table_ygrid(pr_map) == table_ygrid(eta_map) || error("pr_map/eta_map y grids must match")
-    return TabulatedCompressorPerformanceMap(Float64(Tt_ref), Float64(Pt_ref), pr_map, eta_map)
+    ygrid = table_ygrid(pr_map)
+    xgrid = table_xgrid(pr_map)
+    mdot_corr_surge = fill(Float64(first(ygrid)), length(xgrid))
+    mdot_corr_choke = fill(Float64(last(ygrid)), length(xgrid))
+    return TabulatedCompressorPerformanceMap(
+        Tt_ref,
+        Pt_ref,
+        pr_map,
+        eta_map,
+        mdot_corr_surge,
+        mdot_corr_choke,
+    )
 end
 
 function TabulatedCompressorPerformanceMap(
@@ -45,6 +82,8 @@ function TabulatedCompressorPerformanceMap(
     eta_table::Matrix{<:Real},
     ;
     interpolation::Symbol,
+    mdot_corr_surge::Union{Nothing,Vector{<:Real}}=nothing,
+    mdot_corr_choke::Union{Nothing,Vector{<:Real}}=nothing,
 )
     Tt_ref > 0 || error("Tt_ref must be > 0")
     Pt_ref > 0 || error("Pt_ref must be > 0")
@@ -64,7 +103,14 @@ function TabulatedCompressorPerformanceMap(
     pr_map = interpolation_map(interpolation, omega_corr_grid_f, mdot_corr_grid_f, pr_table_f)
     eta_map = interpolation_map(interpolation, omega_corr_grid_f, mdot_corr_grid_f, eta_table_f)
 
-    return TabulatedCompressorPerformanceMap(Float64(Tt_ref), Float64(Pt_ref), pr_map, eta_map)
+    surge = isnothing(mdot_corr_surge) ?
+        fill(first(mdot_corr_grid_f), length(omega_corr_grid_f)) :
+        Float64.(mdot_corr_surge)
+    choke = isnothing(mdot_corr_choke) ?
+        fill(last(mdot_corr_grid_f), length(omega_corr_grid_f)) :
+        Float64.(mdot_corr_choke)
+
+    return TabulatedCompressorPerformanceMap(Float64(Tt_ref), Float64(Pt_ref), pr_map, eta_map, surge, choke)
 end
 
 _omega_corr_grid(map::TabulatedCompressorPerformanceMap) = table_xgrid(map.pr_map)
@@ -72,6 +118,24 @@ _mdot_corr_grid(map::TabulatedCompressorPerformanceMap) = table_ygrid(map.pr_map
 _pr_table(map::TabulatedCompressorPerformanceMap) = table_values(map.pr_map)
 _eta_table(map::TabulatedCompressorPerformanceMap) = table_values(map.eta_map)
 _interpolation_kind(map::TabulatedCompressorPerformanceMap) = table_interpolation(map.pr_map)
+
+function _interp_linear_1d_clamped_tabulated(
+    xgrid::AbstractVector{<:Real},
+    ygrid::AbstractVector{<:Real},
+    x::Real,
+)
+    x1 = first(xgrid)
+    x2 = last(xgrid)
+    xc = clamp(x, x1, x2)
+    i_hi = searchsortedfirst(xgrid, xc)
+    i_hi <= 1 && return ygrid[1]
+    i_hi > length(xgrid) && return ygrid[end]
+    i_lo = i_hi - 1
+    xl = xgrid[i_lo]
+    xr = xgrid[i_hi]
+    t = (xc - xl) / (xr - xl)
+    return (1 - t) * ygrid[i_lo] + t * ygrid[i_hi]
+end
 
 """Map-coordinate speed for tabulated corrected-flow maps (physical omega)."""
 _map_speed_coordinate_from_stagnation(
@@ -110,13 +174,21 @@ function _compressor_performance_map(
 )
     PR = table_evaluate(map.pr_map, speed_coord, flow_coord)
     eta = table_evaluate(map.eta_map, speed_coord, flow_coord)
-    return (PR=PR, eta=eta)
+    mdot_s = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_surge, speed_coord)
+    mdot_c = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_choke, speed_coord)
+    return (
+        PR=PR,
+        eta=eta,
+        stall=(flow_coord < mdot_s),
+        choke=(flow_coord > mdot_c),
+        valid=(mdot_s <= flow_coord <= mdot_c),
+    )
 end
 
 """
 Evaluate a compressor map from physical values and local stagnation state.
 
-Returns `(PR, eta, speed_coord, flow_coord)`.
+Returns `(PR, eta, speed_coord, flow_coord, stall, choke, valid)`.
 """
 function performance_from_stagnation(
     map::TabulatedCompressorPerformanceMap,
@@ -128,7 +200,15 @@ function performance_from_stagnation(
     speed_coord = _map_speed_coordinate_from_stagnation(map, omega, Tt_in, Pt_in)
     flow_coord = _map_flow_coordinate_from_stagnation(map, omega, mdot, Tt_in, Pt_in)
     vals = _compressor_performance_map(map, speed_coord, flow_coord)
-    return (PR=vals.PR, eta=vals.eta, speed_coord=speed_coord, flow_coord=flow_coord)
+    return (
+        PR=vals.PR,
+        eta=vals.eta,
+        speed_coord=speed_coord,
+        flow_coord=flow_coord,
+        stall=vals.stall,
+        choke=vals.choke,
+        valid=vals.valid,
+    )
 end
 
 """
@@ -141,16 +221,25 @@ function performance_map_domain(
 )
     speed_lo = first(_omega_corr_grid(map))
     speed_hi = last(_omega_corr_grid(map))
-    flow_lo = first(_mdot_corr_grid(map))
-    flow_hi = last(_mdot_corr_grid(map))
-    mdot_lo = _physical_mdot_from_map_flow_coordinate(map, speed_lo, flow_lo, Tt_in, Pt_in)
-    mdot_hi = _physical_mdot_from_map_flow_coordinate(map, speed_hi, flow_hi, Tt_in, Pt_in)
+    mdot_vals = Float64[]
+    for omega in _omega_corr_grid(map)
+        mdot_s = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_surge, omega)
+        mdot_c = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_choke, omega)
+        push!(mdot_vals, _physical_mdot_from_map_flow_coordinate(map, omega, mdot_s, Tt_in, Pt_in))
+        push!(mdot_vals, _physical_mdot_from_map_flow_coordinate(map, omega, mdot_c, Tt_in, Pt_in))
+    end
     return (
         omega=(speed_lo, speed_hi),
-        mdot=(min(mdot_lo, mdot_hi), max(mdot_lo, mdot_hi)),
+        mdot=(minimum(mdot_vals), maximum(mdot_vals)),
         mdot_flow_range=(
-            surge=(omega -> _physical_mdot_from_map_flow_coordinate(map, omega, flow_lo, Tt_in, Pt_in)),
-            choke=(omega -> _physical_mdot_from_map_flow_coordinate(map, omega, flow_hi, Tt_in, Pt_in)),
+            surge=(omega -> begin
+                mdot_s = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_surge, omega)
+                _physical_mdot_from_map_flow_coordinate(map, omega, mdot_s, Tt_in, Pt_in)
+            end),
+            choke=(omega -> begin
+                mdot_c = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_choke, omega)
+                _physical_mdot_from_map_flow_coordinate(map, omega, mdot_c, Tt_in, Pt_in)
+            end),
         ),
     )
 end
@@ -226,9 +315,11 @@ function write_toml(
     data = Dict{String,Any}()
     node = _find_or_create_group!(data, group)
     node["format"] = "compressor_performance_map"
-    node["format_version"] = 1
+    node["format_version"] = 2
     node["Tt_ref"] = map.Tt_ref
     node["Pt_ref"] = map.Pt_ref
+    node["mdot_corr_surge"] = Float64.(map.mdot_corr_surge)
+    node["mdot_corr_choke"] = Float64.(map.mdot_corr_choke)
     node["pr_map"] = _table_map_to_toml_dict(map.pr_map)
     node["eta_map"] = _table_map_to_toml_dict(map.eta_map)
     open(path, "w") do io
@@ -250,9 +341,21 @@ function read_toml(
     haskey(node, "eta_map") || error("missing TOML key eta_map")
     Tt_ref = Float64(node["Tt_ref"])
     Pt_ref = Float64(node["Pt_ref"])
+    mdot_corr_surge = haskey(node, "mdot_corr_surge") ? Float64.(node["mdot_corr_surge"]) : nothing
+    mdot_corr_choke = haskey(node, "mdot_corr_choke") ? Float64.(node["mdot_corr_choke"]) : nothing
     pr_map = _table_map_from_toml_dict(node["pr_map"])
     eta_map = _table_map_from_toml_dict(node["eta_map"])
-    return TabulatedCompressorPerformanceMap(Tt_ref, Pt_ref, pr_map, eta_map)
+    if isnothing(mdot_corr_surge) || isnothing(mdot_corr_choke)
+        return TabulatedCompressorPerformanceMap(Tt_ref, Pt_ref, pr_map, eta_map)
+    end
+    return TabulatedCompressorPerformanceMap(
+        Tt_ref,
+        Pt_ref,
+        pr_map,
+        eta_map,
+        mdot_corr_surge,
+        mdot_corr_choke,
+    )
 end
 
 """Demo tabulated compressor map for development/testing."""
@@ -273,5 +376,7 @@ function demo_tabulated_compressor_performance_map(; interpolation::Symbol=:bili
             0.76 0.82 0.79;
         ];
         interpolation=interpolation,
+        mdot_corr_surge=[12.0, 12.0, 12.0],
+        mdot_corr_choke=[20.0, 20.0, 20.0],
     )
 end

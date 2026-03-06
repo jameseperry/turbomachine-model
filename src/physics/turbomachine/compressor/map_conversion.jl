@@ -7,6 +7,24 @@ Compressor map conversion helpers between dimensional and non-dimensional tabula
     return collect(range(Float64(x_lo), Float64(x_hi), length=n))
 end
 
+@inline function _interp_linear_1d_clamped_conversion(
+    xgrid::AbstractVector{<:Real},
+    ygrid::AbstractVector{<:Real},
+    x::Real,
+)
+    x1 = first(xgrid)
+    x2 = last(xgrid)
+    xc = clamp(x, x1, x2)
+    i_hi = searchsortedfirst(xgrid, xc)
+    i_hi <= 1 && return ygrid[1]
+    i_hi > length(xgrid) && return ygrid[end]
+    i_lo = i_hi - 1
+    xl = xgrid[i_lo]
+    xr = xgrid[i_hi]
+    t = (xc - xl) / (xr - xl)
+    return (1 - t) * ygrid[i_lo] + t * ygrid[i_hi]
+end
+
 """
 Convert a dimensional tabulated compressor map into a non-dimensional tabulated map.
 
@@ -43,6 +61,8 @@ function to_nondimensional_tabulated_compressor_map(
 
     omega_grid_src = _omega_corr_grid(map)
     map_flow_grid_src = _mdot_corr_grid(map)
+    surge_grid_src = map.mdot_corr_surge
+    choke_grid_src = map.mdot_corr_choke
     all(omega_grid_src .> 0) || error("source omega grid must be strictly positive")
 
     a0_ref = sqrt(gamma * gas_constant * Tt_in_ref)
@@ -61,10 +81,18 @@ function to_nondimensional_tabulated_compressor_map(
     end
 
     phi_grid = if isnothing(phi_in_grid)
-        map_flow_lo = first(map_flow_grid_src)
-        map_flow_hi = last(map_flow_grid_src)
-        phi_lo = minimum(_phi_from_source_map_flow(Float64(omega), Float64(map_flow_lo)) for omega in omega_grid_src)
-        phi_hi = maximum(_phi_from_source_map_flow(Float64(omega), Float64(map_flow_hi)) for omega in omega_grid_src)
+        phi_lo = minimum(
+            _phi_from_source_map_flow(
+                Float64(omega),
+                _interp_linear_1d_clamped_conversion(omega_grid_src, surge_grid_src, Float64(omega)),
+            ) for omega in omega_grid_src
+        )
+        phi_hi = maximum(
+            _phi_from_source_map_flow(
+                Float64(omega),
+                _interp_linear_1d_clamped_conversion(omega_grid_src, choke_grid_src, Float64(omega)),
+            ) for omega in omega_grid_src
+        )
         _linspace_inclusive(phi_lo, phi_hi, length(map_flow_grid_src))
     else
         Float64.(phi_in_grid)
@@ -84,12 +112,12 @@ function to_nondimensional_tabulated_compressor_map(
         end
     end
 
-    map_flow_surge = Float64(first(map_flow_grid_src))
-    map_flow_choke = Float64(last(map_flow_grid_src))
     phi_surge = Float64[]
     phi_choke = Float64[]
     for m_tip in m_grid
         omega = omega_from_m(m_tip)
+        map_flow_surge = _interp_linear_1d_clamped_conversion(omega_grid_src, surge_grid_src, omega)
+        map_flow_choke = _interp_linear_1d_clamped_conversion(omega_grid_src, choke_grid_src, omega)
         push!(phi_surge, _phi_from_source_map_flow(omega, map_flow_surge))
         push!(phi_choke, _phi_from_source_map_flow(omega, map_flow_choke))
     end
@@ -179,6 +207,16 @@ function to_tabulated_compressor_map(
         end
     end
 
+    mdot_corr_surge = Float64[]
+    mdot_corr_choke = Float64[]
+    for omega in omega_grid
+        m_tip = omega * map.tip_radius_inlet / a0_ref
+        phi_s = _interp_linear_1d_clamped_conversion(m_grid_src, map.phi_surge, m_tip)
+        phi_c = _interp_linear_1d_clamped_conversion(m_grid_src, map.phi_choke, m_tip)
+        push!(mdot_corr_surge, _map_flow_from_source_phi(Float64(omega), phi_s))
+        push!(mdot_corr_choke, _map_flow_from_source_phi(Float64(omega), phi_c))
+    end
+
     return TabulatedCompressorPerformanceMap(
         Tt_ref,
         Pt_ref,
@@ -187,5 +225,7 @@ function to_tabulated_compressor_map(
         pr,
         eta;
         interpolation=interpolation,
+        mdot_corr_surge=mdot_corr_surge,
+        mdot_corr_choke=mdot_corr_choke,
     )
 end
