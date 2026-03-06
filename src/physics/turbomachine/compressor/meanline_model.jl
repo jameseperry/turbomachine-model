@@ -292,3 +292,8 @@ end
 Demo compressor meanline model for development/testing.
 """
 demo_compressor_meanline_model() = AxialMachine.demo_axial_compressor_model()
+
+"""
+Demo turbine-like meanline model serialized via compressor meanline schema.
+"""
+demo_turbine_meanline_model() = AxialMachine.demo_axial_turbine_model()

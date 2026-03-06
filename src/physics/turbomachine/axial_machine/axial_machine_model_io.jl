@@ -197,3 +197,52 @@ function demo_axial_compressor_model()
         (0.01, 0.95),
     )
 end
+
+"""
+Demo axial-machine model configured to behave turbine-like for development/testing.
+
+This model is still serialized using the same `compressor_meanline_model` schema as
+the compressor demo; only the aero row parameters differ.
+"""
+function demo_axial_turbine_model()
+    rows = AxialRow[
+        # Simplified single-stage turbine-like setup: one guide vane and one rotor.
+        AxialRow(
+            stator_aero_model(
+                theta_ref=-0.55,
+                theta_incidence_sensitivity=0.35,
+                loss_base=0.0010,
+                loss_incidence=0.010,
+                stall_incidence_limit=0.55,
+                k_theta_min=-1.8,
+                k_theta_max=0.5,
+            ),
+            0.140,
+            0.220,
+            0.0,
+        ),
+        # Rotor row tuned for smoother work extraction over a narrower domain.
+        AxialRow(
+            rotor_aero_model(
+                theta_ref=0.60,
+                theta_incidence_sensitivity=0.35,
+                loss_base=0.0012,
+                loss_incidence=0.012,
+                stall_incidence_limit=0.55,
+                k_theta_min=-0.5,
+                k_theta_max=1.8,
+            ),
+            0.140,
+            0.220,
+            1.0,
+        ),
+    ]
+    return AxialMachineModel(
+        1.4,
+        287.05,
+        0.220,
+        rows,
+        (0.10, 0.90),
+        (0.10, 0.70),
+    )
+end

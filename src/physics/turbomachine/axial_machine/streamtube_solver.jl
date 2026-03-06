@@ -375,6 +375,54 @@ function streamtube_solve_with_phi(
     )
 end
 
+function _nearest_feasible_flow_sample(
+    model::AxialMachineModel,
+    speed::Float64,
+    flow_target::Float64,
+    flow_lo::Float64,
+    flow_hi::Float64,
+    streamtube_radii::AbstractVector{<:Real},
+    nu_theta_inlet::Float64,
+    prefer_root::Symbol,
+    is_feasible::Function;
+    n_probe::Int=61,
+)
+    flow_min = min(flow_lo, flow_hi)
+    flow_max = max(flow_lo, flow_hi)
+    n_probe >= 3 || error("n_probe must be >= 3")
+    probe = collect(range(flow_min, flow_max, length=n_probe))
+    push!(probe, flow_target)
+    sort!(probe)
+
+    best_dist = Inf
+    best_flow = NaN
+    best_vals = nothing
+    for flow in probe
+        vals = streamtube_solve_with_phi(
+            model,
+            speed,
+            flow;
+            streamtube_radii=streamtube_radii,
+            nu_theta_inlet=nu_theta_inlet,
+            prefer_root=prefer_root,
+        )
+        if is_feasible(vals)
+            dist = abs(flow - flow_target)
+            if dist < best_dist
+                best_dist = dist
+                best_flow = flow
+                best_vals = vals
+            end
+        end
+    end
+
+    return (
+        found=(best_vals !== nothing),
+        flow=best_flow,
+        vals=best_vals,
+    )
+end
+
 """
     sample_streamtube_solve(model, speed_grid, flow_grid; flow_min=nothing, flow_max=nothing, streamtube_radii=meanline_radii(model), nu_theta_inlet=0.0, prefer_root=:low, is_feasible)
 
@@ -420,8 +468,30 @@ function sample_streamtube_solve(
                 nu_theta_inlet=nu_theta_inlet,
                 prefer_root=prefer_root,
             )
+            if !is_feasible(vals)
+                if has_limits
+                    lo = Float64(flow_min[i])
+                    hi = Float64(flow_max[i])
+                    repaired = _nearest_feasible_flow_sample(
+                        model,
+                        speed,
+                        flow,
+                        lo,
+                        hi,
+                        streamtube_radii,
+                        Float64(nu_theta_inlet),
+                        prefer_root,
+                        is_feasible;
+                        n_probe=61,
+                    )
+                    if repaired.found
+                        flow = repaired.flow
+                        vals = repaired.vals
+                    end
+                end
+            end
             is_feasible(vals) ||
-                error("streamtube sampling produced invalid value at speed=$(speed), flow=$(flow)")
+                error("streamtube sampling produced invalid value at speed=$(speed), flow=$(flow), limits=[$(has_limits ? flow_min[i] : NaN), $(has_limits ? flow_max[i] : NaN)]")
             pr_table[i, j] = vals.PR
             eta_table[i, j] = vals.eta
         end

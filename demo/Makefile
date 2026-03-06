@@ -1,54 +1,70 @@
 JULIA ?= julia --project=..
 SCRIPTS := ../scripts
-MAP_VARIANTS := dim/bilinear dim/bicubic nd/bilinear nd/bicubic
+MAP_VARIANTS := dim-bilinear dim-bicubic
+TURBINE_INTERPS := bilinear bicubic
 
-USER_MEANLINE_TOMLS := $(wildcard compressor/meanline/*.toml)
-USER_MAP_TOMLS := $(wildcard compressor/map/*/*/*.toml)
+USER_AXIAL_TOMLS  := $(wildcard meanline/*.toml)
+USER_MAP_TOMLS := $(wildcard map/*.toml)
 
-GENERATED_MEANLINE_TOMLS := compressor/meanline/demo_compressor_meanline_model.toml
-GENERATED_MAP_TOMLS := $(foreach variant,$(MAP_VARIANTS),$(patsubst compressor/meanline/%.toml,compressor/map/$(variant)/%.toml,$(GENERATED_MEANLINE_TOMLS)))
+GENERATED_AXIAL_TOMLS := axial/compressor-demo.toml axial/turbine-demo.toml
+GENERATED_MAP_TOMLS := $(foreach variant,$(MAP_VARIANTS),$(patsubst axial/%.toml,map/%.$(variant).toml,$(GENERATED_AXIAL_TOMLS)))
 
 ALL_MAP_TOMLS := $(sort $(USER_MAP_TOMLS) $(GENERATED_MAP_TOMLS))
 
-PERFORMANCE_MAP_PLOTS := $(ALL_MAP_TOMLS:.toml=_performance_map.png)
-OPERATING_SWEEP_PLOTS := $(ALL_MAP_TOMLS:.toml=_operating_sweep.png)
-OPERATING_SWEEP_CSV := $(ALL_MAP_TOMLS:.toml=_operating_sweep.csv)
+PERFORMANCE_MAP_PLOTS := $(ALL_MAP_TOMLS:.toml=-performance_map.png)
+OPERATING_SWEEP_PLOTS := $(ALL_MAP_TOMLS:.toml=-operating_sweep.png)
+OPERATING_SWEEP_CSV := $(ALL_MAP_TOMLS:.toml=-operating_sweep.csv)
 
 .PHONY: all plots sweeps clean
+.SECONDARY: $(GENERATED_MAP_TOMLS)
 
 all: $(PERFORMANCE_MAP_PLOTS) $(OPERATING_SWEEP_PLOTS)
 
-plots: $(PERFORMANCE_MAP_PLOTS)
+performance-plots: $(PERFORMANCE_MAP_PLOTS)
 
-sweeps: $(OPERATING_SWEEP_PLOTS)
+sweep-plots: $(OPERATING_SWEEP_PLOTS)
 
-compressor/meanline/demo_compressor_meanline_model.toml: $(SCRIPTS)/create_demo_object.jl
+axial/compressor-demo.toml: $(SCRIPTS)/create_demo_object.jl
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_meanline_model $@
 
-compressor/map/nd/bilinear/%.toml: compressor/meanline/%.toml
+axial/turbine-demo.toml: $(SCRIPTS)/create_demo_object.jl
 	@mkdir -p $(@D)
-	$(JULIA) $(SCRIPTS)/generate_compressor_map_from_meanline_model.jl $< $@ --input-group compressor_meanline_model --output-group compressor_map --output-format nondimensional --interpolation bilinear
+	$(JULIA) $(SCRIPTS)/create_demo_object.jl compressor_meanline_turbine_model $@
 
-compressor/map/nd/bicubic/%.toml: compressor/meanline/%.toml
+map/compressor-%.dim-bilinear.toml: axial/compressor-%.toml
 	@mkdir -p $(@D)
-	$(JULIA) $(SCRIPTS)/generate_compressor_map_from_meanline_model.jl $< $@ --input-group compressor_meanline_model --output-group compressor_map --output-format nondimensional --interpolation bicubic
+	$(JULIA) $(SCRIPTS)/generate_compressor_map_from_meanline_model.jl $< $@ \
+		--output-format dimensional \
+		--interpolation bilinear
 
-compressor/map/dim/bilinear/%.toml: compressor/meanline/%.toml
+map/compressor-%.dim-bicubic.toml: axial/compressor-%.toml
 	@mkdir -p $(@D)
-	$(JULIA) $(SCRIPTS)/generate_compressor_map_from_meanline_model.jl $< $@ --input-group compressor_meanline_model --output-group compressor_map --output-format dimensional --interpolation bilinear
+	$(JULIA) $(SCRIPTS)/generate_compressor_map_from_meanline_model.jl $< $@ \
+		--output-format dimensional \
+		--interpolation bicubic
 
-compressor/map/dim/bicubic/%.toml: compressor/meanline/%.toml
+map/turbine-%.dim-bilinear.toml: axial/turbine-%.toml
 	@mkdir -p $(@D)
-	$(JULIA) $(SCRIPTS)/generate_compressor_map_from_meanline_model.jl $< $@ --input-group compressor_meanline_model --output-group compressor_map --output-format dimensional --interpolation bicubic
+	$(JULIA) $(SCRIPTS)/generate_turbine_map_from_meanline_model.jl $< $@ \
+		--interpolation bilinear
 
-%_performance_map.png: %.toml
+map/turbine-%.dim-bicubic.toml: axial/turbine-%.toml
 	@mkdir -p $(@D)
-	$(JULIA) $(SCRIPTS)/plot_performance_map.jl $< --kind compressor --output $@
+	$(JULIA) $(SCRIPTS)/generate_turbine_map_from_meanline_model.jl $< $@ \
+		--interpolation bicubic
 
-%_operating_sweep.png: %.toml
+map/%-performance_map.png: map/%.toml
 	@mkdir -p $(@D)
-	$(JULIA) $(SCRIPTS)/plot_compressor_operating_sweep.jl $< --target-pr 10.0 --allow-windmill --branch all --csv $*_operating_sweep.csv --output $@
+	$(JULIA) $(SCRIPTS)/plot_performance_map.jl $< --output $@
+
+map/compressor-%-operating_sweep.png: map/compressor-%.toml
+	@mkdir -p $(@D)
+	$(JULIA) $(SCRIPTS)/plot_compressor_operating_sweep.jl $< --target-pr 10.0 --allow-windmill --branch all --csv $(@:-operating_sweep.png=-operating_sweep.csv) --output $@
+
+map/turbine-%-operating_sweep.png: map/turbine-%.toml
+	@mkdir -p $(@D)
+	$(JULIA) $(SCRIPTS)/plot_turbine_operating_sweep.jl $< --branch all --csv $(@:-operating_sweep.png=-operating_sweep.csv) --output $@
 
 clean:
-	rm -f $(GENERATED_MEANLINE_TOMLS) $(GENERATED_MAP_TOMLS) $(PERFORMANCE_MAP_PLOTS) $(OPERATING_SWEEP_PLOTS) $(OPERATING_SWEEP_CSV)
+	rm -f $(GENERATED_AXIAL_TOMLS) $(GENERATED_MAP_TOMLS) $(PERFORMANCE_MAP_PLOTS) $(OPERATING_SWEEP_PLOTS) $(OPERATING_SWEEP_CSV)

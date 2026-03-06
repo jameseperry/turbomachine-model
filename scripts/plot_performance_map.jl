@@ -263,12 +263,6 @@ function _plot_compressor_six_panel(
         bottom_margin=8mm,
         top_margin=8mm,
     )
-    if !isempty(mdot_points) && !isempty(omega_points)
-        xpts = vec(repeat(mdot_points', length(omega_points)))
-        ypts = vec(repeat(omega_points, 1, length(mdot_points)))
-        scatter!(p_pr, xpts, ypts; ms=2, label=false)
-        scatter!(p_eta, xpts, ypts; ms=2, label=false)
-    end
     plot!(p_pr, boundary.mdot_surge, omega_eval; lw=2, ls=:dash, color=:black, label="surge")
     plot!(p_pr, boundary.mdot_choke, omega_eval; lw=2, ls=:dot, color=:black, label="choke")
     plot!(p_eta, boundary.mdot_surge, omega_eval; lw=2, ls=:dash, color=:black, label="surge")
@@ -412,13 +406,14 @@ function _plot_compressor_six_panel(
     )
 end
 
-function _plot_turbine_four_panel(
+function _plot_turbine_six_panel(
     pr_eval::AbstractVector{<:Real},
     omega_eval::AbstractVector{<:Real},
     mdot_eval::AbstractMatrix{<:Real},
     eta_eval::AbstractMatrix{<:Real},
     pr_points::AbstractVector{<:Real},
     omega_points::AbstractVector{<:Real};
+    boundary::NamedTuple,
     title_prefix::String,
 )
     p_mdot = contour(
@@ -449,12 +444,10 @@ function _plot_turbine_four_panel(
         bottom_margin=8mm,
         top_margin=8mm,
     )
-    if !isempty(pr_points) && !isempty(omega_points)
-        xpts = vec(repeat(pr_points', length(omega_points)))
-        ypts = vec(repeat(omega_points, 1, length(pr_points)))
-        scatter!(p_mdot, xpts, ypts; ms=2, label=false)
-        scatter!(p_eta, xpts, ypts; ms=2, label=false)
-    end
+    plot!(p_mdot, boundary.pr_low, omega_eval; lw=2, ls=:dash, color=:black, label="low_pr")
+    plot!(p_mdot, boundary.pr_high, omega_eval; lw=2, ls=:dot, color=:black, label="high_pr")
+    plot!(p_eta, boundary.pr_low, omega_eval; lw=2, ls=:dash, color=:black, label="low_pr")
+    plot!(p_eta, boundary.pr_high, omega_eval; lw=2, ls=:dot, color=:black, label="high_pr")
 
     mdot_lo, mdot_hi = _finite_range(mdot_eval)
     eta_lo, eta_hi = _finite_range(eta_eval)
@@ -493,6 +486,8 @@ function _plot_turbine_four_panel(
             bottom_margin=8mm,
             top_margin=8mm,
         )
+    plot!(p_mdot_vs_omega, omega_eval, boundary.mdot_low; lw=2, ls=:dash, color=:black, label="low_pr")
+    plot!(p_mdot_vs_omega, omega_eval, boundary.mdot_high; lw=2, ls=:dot, color=:black, label="high_pr")
 
     p_eta_vs_omega =
         isempty(eta_axis) ? plot(
@@ -517,14 +512,74 @@ function _plot_turbine_four_panel(
             bottom_margin=8mm,
             top_margin=8mm,
         )
+    plot!(p_eta_vs_omega, omega_eval, boundary.eta_low; lw=2, ls=:dash, color=:black, label="low_pr")
+    plot!(p_eta_vs_omega, omega_eval, boundary.eta_high; lw=2, ls=:dot, color=:black, label="high_pr")
+
+    omega_on_mdot = isempty(mdot_axis) ? fill(NaN, length(pr_eval), 0) :
+                    _rowwise_inverse_grid(pr_eval, omega_eval, permutedims(mdot_eval), mdot_axis)
+    p_pr_vs_mdot =
+        isempty(mdot_axis) ? plot(
+            xlabel="mdot_corr",
+            ylabel="PR_turb",
+            title="$(title_prefix): PR vs mdot (omega contours)",
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        ) : contour(
+            mdot_axis,
+            pr_eval,
+            omega_on_mdot;
+            xlabel="mdot_corr",
+            ylabel="PR_turb",
+            title="$(title_prefix): PR vs mdot (omega contours)",
+            colorbar_title="omega_corr",
+            linewidth=2,
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        )
+    plot!(p_pr_vs_mdot, boundary.mdot_low, boundary.pr_low; lw=2, ls=:dash, color=:black, label="low_pr")
+    plot!(p_pr_vs_mdot, boundary.mdot_high, boundary.pr_high; lw=2, ls=:dot, color=:black, label="high_pr")
+
+    omega_on_eta = isempty(eta_axis) ? fill(NaN, length(pr_eval), 0) :
+                   _rowwise_inverse_grid(pr_eval, omega_eval, permutedims(eta_eval), eta_axis)
+    p_pr_vs_eta =
+        isempty(eta_axis) ? plot(
+            xlabel="eta",
+            ylabel="PR_turb",
+            title="$(title_prefix): PR vs eta (omega contours)",
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        ) : contour(
+            eta_axis,
+            pr_eval,
+            omega_on_eta;
+            xlabel="eta",
+            ylabel="PR_turb",
+            title="$(title_prefix): PR vs eta (omega contours)",
+            colorbar_title="omega_corr",
+            linewidth=2,
+            left_margin=8mm,
+            right_margin=10mm,
+            bottom_margin=8mm,
+            top_margin=8mm,
+        )
+    plot!(p_pr_vs_eta, boundary.eta_low, boundary.pr_low; lw=2, ls=:dash, color=:black, label="low_pr")
+    plot!(p_pr_vs_eta, boundary.eta_high, boundary.pr_high; lw=2, ls=:dot, color=:black, label="high_pr")
 
     return plot(
         p_mdot,
         p_eta,
         p_mdot_vs_omega,
-        p_eta_vs_omega;
-        layout=(2, 2),
-        size=(1400, 1100),
+        p_eta_vs_omega,
+        p_pr_vs_mdot,
+        p_pr_vs_eta;
+        layout=(3, 2),
+        size=(1500, 1600),
         left_margin=8mm,
         right_margin=10mm,
         bottom_margin=8mm,
@@ -640,25 +695,79 @@ function plot_performance_map(
     resolution >= 4 || error("resolution must be >= 4")
     domain = Turbine.performance_map_domain(map)
     omega_min, omega_max = domain.omega_corr
-    pr_min, pr_max = domain.pr_turb
-    pr_eval = collect(range(pr_min, pr_max, length=resolution))
     omega_eval = collect(range(omega_min, omega_max, length=resolution))
-    mdot_eval = [Turbine.turbine_performance_map(map, ω, pr).mdot_corr for ω in omega_eval, pr in pr_eval]
-    eta_eval = [
-        begin
-            eta = Turbine.turbine_performance_map(map, ω, pr).eta
-            (isfinite(eta) && eta > 0) ? eta : NaN
-        end for ω in omega_eval, pr in pr_eval
-    ]
+    if hasproperty(domain, :pr_turb_range)
+        pr_min = minimum(domain.pr_turb_range.min(ω) for ω in omega_eval)
+        pr_max = maximum(domain.pr_turb_range.max(ω) for ω in omega_eval)
+        pr_lo = min(pr_min, pr_max)
+        pr_hi = max(pr_min, pr_max)
+    else
+        pr_min, pr_max = domain.pr_turb
+        pr_lo = min(pr_min, pr_max)
+        pr_hi = max(pr_min, pr_max)
+    end
+    pr_eval = collect(range(pr_lo, pr_hi, length=resolution))
+    mdot_eval = Matrix{Float64}(undef, length(omega_eval), length(pr_eval))
+    eta_eval = Matrix{Float64}(undef, length(omega_eval), length(pr_eval))
+    pr_low = Float64[]
+    pr_high = Float64[]
+    mdot_low = Float64[]
+    mdot_high = Float64[]
+    eta_low = Float64[]
+    eta_high = Float64[]
+    for (i, ω) in pairs(omega_eval)
+        if hasproperty(domain, :pr_turb_range)
+            lo_i = domain.pr_turb_range.min(ω)
+            hi_i = domain.pr_turb_range.max(ω)
+            pr_lo_i = min(lo_i, hi_i)
+            pr_hi_i = max(lo_i, hi_i)
+        else
+            lo_i, hi_i = domain.pr_turb
+            pr_lo_i = min(lo_i, hi_i)
+            pr_hi_i = max(lo_i, hi_i)
+        end
+        push!(pr_low, pr_lo_i)
+        push!(pr_high, pr_hi_i)
+        vals_lo = Turbine.turbine_performance_map(map, ω, pr_lo_i)
+        vals_hi = Turbine.turbine_performance_map(map, ω, pr_hi_i)
+        push!(mdot_low, isfinite(vals_lo.mdot_corr) ? vals_lo.mdot_corr : NaN)
+        push!(mdot_high, isfinite(vals_hi.mdot_corr) ? vals_hi.mdot_corr : NaN)
+        push!(eta_low, (isfinite(vals_lo.eta) && vals_lo.eta > 0) ? vals_lo.eta : NaN)
+        push!(eta_high, (isfinite(vals_hi.eta) && vals_hi.eta > 0) ? vals_hi.eta : NaN)
+
+        for (j, pr) in pairs(pr_eval)
+            if pr < pr_lo_i || pr > pr_hi_i
+                mdot_eval[i, j] = NaN
+                eta_eval[i, j] = NaN
+            else
+                vals = Turbine.turbine_performance_map(map, ω, pr)
+                if hasproperty(vals, :valid) && !vals.valid
+                    mdot_eval[i, j] = NaN
+                    eta_eval[i, j] = NaN
+                else
+                    mdot_eval[i, j] = vals.mdot_corr
+                    eta_eval[i, j] = (isfinite(vals.eta) && vals.eta > 0) ? vals.eta : NaN
+                end
+            end
+        end
+    end
     pr_points, omega_points = _grid_points(map)
 
-    return _plot_turbine_four_panel(
+    return _plot_turbine_six_panel(
         pr_eval,
         omega_eval,
         mdot_eval,
         eta_eval,
         pr_points,
         omega_points;
+        boundary=(
+            pr_low=pr_low,
+            pr_high=pr_high,
+            mdot_low=mdot_low,
+            mdot_high=mdot_high,
+            eta_low=eta_low,
+            eta_high=eta_high,
+        ),
         title_prefix=title_prefix,
     )
 end

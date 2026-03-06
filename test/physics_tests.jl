@@ -557,6 +557,14 @@
         @test isapprox(meanline_vals_loaded.PR, meanline_vals.PR; rtol=1e-12)
         @test isapprox(meanline_vals_loaded.eta, meanline_vals.eta; rtol=1e-12)
 
+        meanline_turbine = TM.demo_turbine_meanline_model()
+        m_mid_t = 0.5 * (meanline_turbine.m_tip_bounds[1] + meanline_turbine.m_tip_bounds[2])
+        phi_mid_t = 0.5 * (meanline_turbine.phi_in_bounds[1] + meanline_turbine.phi_in_bounds[2])
+        vals_turbine = AM.streamtube_solve_with_phi(meanline_turbine, m_mid_t, phi_mid_t)
+        @test hasproperty(vals_turbine, :valid)
+        @test hasproperty(vals_turbine, :PR)
+        @test hasproperty(vals_turbine, :eta)
+
         turbine_map = TT.TabulatedTurbinePerformanceMap(
             300.0,
             100_000.0,

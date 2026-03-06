@@ -14,11 +14,13 @@ function _parse_object_type(raw::AbstractString)
         return :compressor_nondimensional_tabulated
     elseif key in ("compressor_meanline_model", "compressor_meanline", "meanline")
         return :compressor_meanline_model
+    elseif key in ("compressor_meanline_turbine_model", "compressor_turbine_meanline", "meanline_turbine", "axial_turbine_model")
+        return :compressor_meanline_turbine_model
     elseif key in ("turbine_tabulated", "turbine")
         return :turbine_tabulated
     end
     error(
-        "unsupported object_type=$(raw) (expected compressor_tabulated|compressor_nondimensional_tabulated|compressor_meanline_model|turbine_tabulated)",
+        "unsupported object_type=$(raw) (expected compressor_tabulated|compressor_nondimensional_tabulated|compressor_meanline_model|compressor_meanline_turbine_model|turbine_tabulated)",
     )
 end
 
@@ -26,6 +28,7 @@ function _default_group(object_type::Symbol)
     object_type == :compressor_tabulated && return "compressor_map"
     object_type == :compressor_nondimensional_tabulated && return "compressor_map"
     object_type == :compressor_meanline_model && return "compressor_meanline_model"
+    object_type == :compressor_meanline_turbine_model && return "compressor_meanline_model"
     object_type == :turbine_tabulated && return "turbine_map"
     error("unsupported object_type=$(object_type)")
 end
@@ -37,6 +40,8 @@ function _build_demo_object(object_type::Symbol, interpolation::Symbol)
         return Compressor.demo_nondimensional_tabulated_compressor_performance_map(; interpolation=interpolation)
     elseif object_type == :compressor_meanline_model
         return Compressor.demo_compressor_meanline_model()
+    elseif object_type == :compressor_meanline_turbine_model
+        return Compressor.demo_turbine_meanline_model()
     elseif object_type == :turbine_tabulated
         return Turbine.demo_tabulated_turbine_performance_map(; interpolation=interpolation)
     end
@@ -51,7 +56,7 @@ function _build_parser()
 
     @add_arg_table! settings begin
         "object_type"
-            help = "demo object type: compressor_tabulated, compressor_nondimensional_tabulated, compressor_meanline_model, or turbine_tabulated"
+            help = "demo object type: compressor_tabulated, compressor_nondimensional_tabulated, compressor_meanline_model, compressor_meanline_turbine_model, or turbine_tabulated"
             required = true
         "output_path"
             help = "output TOML path"
@@ -85,6 +90,7 @@ function _main(args::Vector{String}=ARGS)
         :compressor_tabulated,
         :compressor_nondimensional_tabulated,
         :compressor_meanline_model,
+        :compressor_meanline_turbine_model,
     )
         Compressor.write_toml(obj, output_path; group=group)
     elseif object_type == :turbine_tabulated
