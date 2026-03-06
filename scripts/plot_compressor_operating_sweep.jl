@@ -55,6 +55,7 @@ function _plot_compressor_operating_sweep_data(
             marker=:circle,
             label=false,
         )
+        hline!(p1, [1.0]; ls=:dash, lw=1, color=:black, label=false)
 
         p2 = plot(
             omega_rad_s,
@@ -90,6 +91,28 @@ function _plot_compressor_operating_sweep_data(
             marker=:circle,
             label=false,
         )
+
+        if hasproperty(data, :operating_mode)
+            compressor_idx = findall(i -> data.converged[i] && data.operating_mode[i] == :compressor, eachindex(data.omegas))
+            windmill_idx = findall(i -> data.converged[i] && data.operating_mode[i] == :windmill, eachindex(data.omegas))
+            isempty(compressor_idx) || scatter!(
+                p1,
+                data.omegas[compressor_idx],
+                data.prs[compressor_idx];
+                markercolor=:blue,
+                markersize=4,
+                label=false,
+            )
+            isempty(windmill_idx) || scatter!(
+                p1,
+                data.omegas[windmill_idx],
+                data.prs[windmill_idx];
+                markercolor=:red,
+                markershape=:diamond,
+                markersize=5,
+                label=false,
+            )
+        end
 
         fig = plot(
             p1,
@@ -164,6 +187,7 @@ function _plot_compressor_operating_sweep_data(
         title="Compression Ratio vs Shaft Speed",
         label=false,
     )
+    hline!(p1, [1.0]; ls=:dash, lw=1, color=:black, label=false)
     p2 = plot(
         xlabel="shaft speed omega (rad/s)",
         ylabel="mass flow rate mdot (kg/s)",
@@ -201,6 +225,25 @@ function _plot_compressor_operating_sweep_data(
         plot!(p4, omega_rad_s, eta_line; lw=2, marker=:circle, ms=3, label=false)
     end
 
+    windmill_omega = Float64[]
+    windmill_pr = Float64[]
+    for r in data.rows
+        r.converged || continue
+        if hasproperty(r, :operating_mode) && r.operating_mode == :windmill
+            push!(windmill_omega, Float64(r.omega))
+            push!(windmill_pr, Float64(r.PR))
+        end
+    end
+    isempty(windmill_omega) || scatter!(
+        p1,
+        windmill_omega,
+        windmill_pr;
+        markercolor=:red,
+        markershape=:diamond,
+        markersize=5,
+        label=false,
+    )
+
     fig = plot(
         p1,
         p2,
@@ -235,12 +278,13 @@ function write_compressor_operating_sweep_csv(
     open(output_path, "w") do io
         println(
             io,
-            "omega_rad_per_s,branch_id,PR,eta,mdot,power_kw,converged,backoff_used,mdot_surge,mdot_choke,surge_margin_kg_per_s,choke_margin_kg_per_s,surge_margin_norm,choke_margin_norm,stall_flag,choke_flag,failure_reason,requested_pr,requested_pt_out_pa,achieved_pr,achieved_pt_out_pa,n_target_roots,n_achieved_roots,flow_mdot_min,flow_mdot_max,pr_surge,pr_choke,pr_max,mdot_at_pr_max,pr_peak_boundary,target_feasible_by_scan,root_bracketed_by_scan,infeasibility_hint",
+            "omega_rad_per_s,branch_id,PR,eta,mdot,power_kw,operating_mode,converged,backoff_used,mdot_surge,mdot_choke,surge_margin_kg_per_s,choke_margin_kg_per_s,surge_margin_norm,choke_margin_norm,stall_flag,choke_flag,failure_reason,requested_pr,requested_pt_out_pa,achieved_pr,achieved_pt_out_pa,n_target_roots,n_achieved_roots,flow_mdot_min,flow_mdot_max,pr_surge,pr_choke,pr_max,mdot_at_pr_max,pr_peak_boundary,target_feasible_by_scan,root_bracketed_by_scan,infeasibility_hint",
         )
         if data.mode == :single
             for i in eachindex(data.omegas)
                 branch_id = data.branch == :low ? 1 : 2
                 power_kw = data.powers[i] / 1_000.0
+                op_mode = hasproperty(data, :operating_mode) ? String(data.operating_mode[i]) : (isfinite(data.prs[i]) && data.prs[i] < 1.0 ? "windmill" : "compressor")
                 d = get(
                     diag_by_omega,
                     Float64(data.omegas[i]),
@@ -266,12 +310,13 @@ function write_compressor_operating_sweep_csv(
                 )
                 println(
                     io,
-                    "$(data.omegas[i]),$branch_id,$(data.prs[i]),$(data.etas[i]),$(data.mdots[i]),$(power_kw),$(data.converged[i]),$(data.backoff_used[i]),$(data.mdot_surge[i]),$(data.mdot_choke[i]),$(data.surge_margin[i]),$(data.choke_margin[i]),$(data.surge_margin_norm[i]),$(data.choke_margin_norm[i]),$(data.stall_flag[i]),$(data.choke_flag[i]),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max),$(d.pr_surge),$(d.pr_choke),$(d.pr_max),$(d.mdot_at_pr_max),$(d.pr_peak_boundary),$(d.target_feasible_by_scan),$(d.root_bracketed_by_scan),$(d.infeasibility_hint)",
+                    "$(data.omegas[i]),$branch_id,$(data.prs[i]),$(data.etas[i]),$(data.mdots[i]),$(power_kw),$(op_mode),$(data.converged[i]),$(data.backoff_used[i]),$(data.mdot_surge[i]),$(data.mdot_choke[i]),$(data.surge_margin[i]),$(data.choke_margin[i]),$(data.surge_margin_norm[i]),$(data.choke_margin_norm[i]),$(data.stall_flag[i]),$(data.choke_flag[i]),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max),$(d.pr_surge),$(d.pr_choke),$(d.pr_max),$(d.mdot_at_pr_max),$(d.pr_peak_boundary),$(d.target_feasible_by_scan),$(d.root_bracketed_by_scan),$(d.infeasibility_hint)",
                 )
             end
         else
             for r in data.rows
                 power_kw = r.power / 1_000.0
+                op_mode = hasproperty(r, :operating_mode) ? String(r.operating_mode) : (isfinite(r.PR) && r.PR < 1.0 ? "windmill" : "compressor")
                 d = get(
                     diag_by_omega,
                     Float64(r.omega),
@@ -297,7 +342,7 @@ function write_compressor_operating_sweep_csv(
                 )
                 println(
                     io,
-                    "$(r.omega),$(r.branch_id),$(r.PR),$(r.eta),$(r.mdot),$(power_kw),$(r.converged),$(r.backoff_used),$(r.mdot_surge),$(r.mdot_choke),$(r.surge_margin),$(r.choke_margin),$(r.surge_margin_norm),$(r.choke_margin_norm),$(r.stall_flag),$(r.choke_flag),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max),$(d.pr_surge),$(d.pr_choke),$(d.pr_max),$(d.mdot_at_pr_max),$(d.pr_peak_boundary),$(d.target_feasible_by_scan),$(d.root_bracketed_by_scan),$(d.infeasibility_hint)",
+                    "$(r.omega),$(r.branch_id),$(r.PR),$(r.eta),$(r.mdot),$(power_kw),$(op_mode),$(r.converged),$(r.backoff_used),$(r.mdot_surge),$(r.mdot_choke),$(r.surge_margin),$(r.choke_margin),$(r.surge_margin_norm),$(r.choke_margin_norm),$(r.stall_flag),$(r.choke_flag),$(d.failure_reason),$(d.requested_pr),$(d.requested_pt_out),$(d.achieved_pr),$(d.achieved_pt_out),$(d.n_target_roots),$(d.n_achieved_roots),$(d.flow_mdot_min),$(d.flow_mdot_max),$(d.pr_surge),$(d.pr_choke),$(d.pr_max),$(d.mdot_at_pr_max),$(d.pr_peak_boundary),$(d.target_feasible_by_scan),$(d.root_bracketed_by_scan),$(d.infeasibility_hint)",
                 )
             end
         end
@@ -364,8 +409,11 @@ function _main(args::Vector{String}=ARGS)
         "--disable-pr-backoff"
             help = "disable pt_out backoff when target PR has no root"
             action = :store_true
+        "--allow-windmill"
+            help = "allow backoff and solutions with PR < 1 (windmilling mode)"
+            action = :store_true
         "--backoff-min-pt-out"
-            help = "minimum pt_out to consider in backoff search (Pa); default=pt_in"
+            help = "minimum pt_out to consider in backoff search (Pa); default=pt_in, or near 0 when --allow-windmill is set"
             arg_type = Float64
         "--backoff-max-pt-out"
             help = "maximum pt_out to consider in backoff search (Pa); default=pt_in*target_pr"
@@ -413,6 +461,7 @@ function _main(args::Vector{String}=ARGS)
 
     target_pr = something(_parsed_opt(parsed, "target_pr", "target-pr"), 10.0)
     pr_backoff = !something(_parsed_opt(parsed, "disable_pr_backoff", "disable-pr-backoff"), false)
+    allow_windmill = something(_parsed_opt(parsed, "allow_windmill", "allow-windmill"), false)
     backoff_min_pt_out = _parsed_opt(parsed, "backoff_min_pt_out", "backoff-min-pt-out")
     backoff_max_pt_out = _parsed_opt(parsed, "backoff_max_pt_out", "backoff-max-pt-out")
     backoff_pt_out_tol = something(_parsed_opt(parsed, "backoff_pt_out_tol", "backoff-pt-out-tol"), 50.0)
@@ -439,6 +488,7 @@ function _main(args::Vector{String}=ARGS)
         Tt_in=tt_in,
         target_pr=target_pr,
         branch=branch,
+        allow_windmill=allow_windmill,
         pr_backoff=pr_backoff,
         backoff_min_pt_out=backoff_min_pt_out,
         backoff_max_pt_out=backoff_max_pt_out,

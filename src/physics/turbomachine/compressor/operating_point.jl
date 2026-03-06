@@ -292,6 +292,7 @@ function _compressor_pr_roots_with_backoff(
     pt_in::Float64,
     target_pr::Float64;
     enabled::Bool=true,
+    allow_windmill::Bool=false,
     min_pt_out::Float64=pt_in,
     max_pt_out::Float64=pt_in * target_pr,
     pt_out_tol::Float64=50.0,
@@ -299,7 +300,11 @@ function _compressor_pr_roots_with_backoff(
     prior_roots::AbstractVector{<:Real}=Float64[],
 )
     target_pt_out = pt_in * target_pr
-    lo_pt = max(min_pt_out, pt_in)
+    min_physical_pt_out = max(1e-6, eps(Float64) * pt_in)
+    lo_pt = max(min_pt_out, min_physical_pt_out)
+    if !allow_windmill
+        lo_pt = max(lo_pt, pt_in)
+    end
     hi_pt = min(max_pt_out, target_pt_out)
     lo_pt <= hi_pt || return (
         roots=NamedTuple[],
@@ -441,9 +446,29 @@ function _compressor_root_outputs(
 )
     mdot = root.mdot
     pt_out = pt_in * root.PR
-    eta_safe = max(root.eta, 1e-6)
+    operating_mode = root.PR >= 1.0 ? :compressor : :windmill
     h2s = Fluids.isentropic_enthalpy(eos, pt_in, ht_in, pt_out)
-    ht_out = ht_in + (h2s - ht_in) / eta_safe
+
+    ht_out = if operating_mode == :compressor
+        # Compressor convention:
+        #   eta_c = (h2s - h1) / (h2 - h1)
+        # Keep a floor to avoid division blow-ups in pathological map regions.
+        eta_safe = max(root.eta, 1e-6)
+        ht_in + (h2s - ht_in) / eta_safe
+    else
+        # Windmilling / turbine-like convention:
+        #   eta_t = (h1 - h2) / (h1 - h2s)
+        # We estimate eta_t from compressor-map eta as eta_t ≈ -1/eta_c and bound it.
+        # This avoids unphysical megawatt outputs when eta_c is near zero/very negative.
+        hdrop_is = max(ht_in - h2s, 0.0)
+        eta_t_est = if root.eta < -1e-6
+            clamp(-1.0 / root.eta, 0.0, 1.0)
+        else
+            0.0
+        end
+        ht_in - eta_t_est * hdrop_is
+    end
+
     tau = mdot * (ht_out - ht_in) / max(omega, 1e-12)
     power = tau * omega
     margins = _compressor_operating_margins(map, omega, mdot, Tt_in, pt_in)
@@ -462,6 +487,7 @@ function _compressor_root_outputs(
         choke_margin_norm=margins.choke_margin_norm,
         stall_flag=margins.stall_flag,
         choke_flag=margins.choke_flag,
+        operating_mode=operating_mode,
     )
 end
 
@@ -473,6 +499,10 @@ Supports branch selection:
 - `:high` (default): highest-flow root
 - `:low`: lowest-flow root
 - `:all`: all roots at each speed (CSV-oriented output)
+
+Windmilling policy:
+- `allow_windmill=false` (default): enforces compressor-only target/backoff (`PR > 1`).
+- `allow_windmill=true`: permits backoff and selected roots with `PR < 1`.
 
 Returns either:
 - `mode=:single` with one row per speed (`:low`/`:high`)
@@ -488,6 +518,7 @@ function solve_compressor_operating_sweep(
     Tt_in::Real=288.15,
     target_pr::Real=2.0,
     branch::Symbol=:high,
+    allow_windmill::Bool=false,
     pr_backoff::Bool=true,
     backoff_min_pt_out::Union{Nothing,Real}=nothing,
     backoff_max_pt_out::Union{Nothing,Real}=nothing,
@@ -495,7 +526,11 @@ function solve_compressor_operating_sweep(
     backoff_max_iters::Int=24,
 )
     target_pr_f = Float64(target_pr)
-    target_pr_f > 1.0 || error("target_pr must be > 1.0")
+    if allow_windmill
+        target_pr_f > 0.0 || error("target_pr must be > 0 when allow_windmill=true")
+    else
+        target_pr_f > 1.0 || error("target_pr must be > 1.0 when allow_windmill=false")
+    end
     branch in (:low, :high, :all) || error("branch must be one of: low|high|all")
 
     omega_min_f = Float64(omega_min)
@@ -505,7 +540,7 @@ function solve_compressor_operating_sweep(
     ht_in = Fluids.enthalpy_from_temperature(eos, Tt_in_f)
     omegas = collect(range(omega_min_f, omega_max_f, length=n_points))
 
-    min_pt_out = isnothing(backoff_min_pt_out) ? pt_in_f : Float64(backoff_min_pt_out)
+    min_pt_out = isnothing(backoff_min_pt_out) ? (allow_windmill ? 0.0 : pt_in_f) : Float64(backoff_min_pt_out)
     max_pt_out = isnothing(backoff_max_pt_out) ? (pt_in_f * target_pr_f) : Float64(backoff_max_pt_out)
 
     if branch == :all
@@ -527,6 +562,7 @@ function solve_compressor_operating_sweep(
                 pt_in_f,
                 target_pr_f;
                 enabled=pr_backoff,
+                allow_windmill=allow_windmill,
                 min_pt_out=min_pt_out,
                 max_pt_out=max_pt_out,
                 pt_out_tol=Float64(backoff_pt_out_tol),
@@ -578,6 +614,7 @@ function solve_compressor_operating_sweep(
                     choke_margin_norm=NaN,
                     stall_flag=false,
                     choke_flag=false,
+                    operating_mode=:unresolved,
                 ))
                 continue
             end
@@ -602,6 +639,7 @@ function solve_compressor_operating_sweep(
                     choke_margin_norm=out.choke_margin_norm,
                     stall_flag=out.stall_flag,
                     choke_flag=out.choke_flag,
+                    operating_mode=out.operating_mode,
                 ))
             end
             prior_roots = [r.mdot for r in found.roots]
@@ -623,6 +661,7 @@ function solve_compressor_operating_sweep(
     choke_margin_norm = fill(NaN, n_points)
     stall_flag = fill(false, n_points)
     choke_flag = fill(false, n_points)
+    operating_mode = fill(:unresolved, n_points)
     diagnostics = NamedTuple[]
     prior_roots = Float64[]
 
@@ -641,6 +680,7 @@ function solve_compressor_operating_sweep(
             pt_in_f,
             target_pr_f;
             enabled=pr_backoff,
+            allow_windmill=allow_windmill,
             min_pt_out=min_pt_out,
             max_pt_out=max_pt_out,
             pt_out_tol=Float64(backoff_pt_out_tol),
@@ -694,6 +734,7 @@ function solve_compressor_operating_sweep(
         choke_margin_norm[i] = out.choke_margin_norm
         stall_flag[i] = out.stall_flag
         choke_flag[i] = out.choke_flag
+        operating_mode[i] = out.operating_mode
         prior_roots = [r.mdot for r in found.roots]
     end
 
@@ -715,6 +756,7 @@ function solve_compressor_operating_sweep(
         choke_margin_norm=choke_margin_norm,
         stall_flag=stall_flag,
         choke_flag=choke_flag,
+        operating_mode=operating_mode,
         diagnostics=diagnostics,
     )
 end

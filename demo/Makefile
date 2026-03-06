@@ -48,7 +48,7 @@ compressor/map/dim/bicubic/%.toml: compressor/meanline/%.toml
 
 %_operating_sweep.png: %.toml
 	@mkdir -p $(@D)
-	$(JULIA) $(SCRIPTS)/plot_compressor_operating_sweep.jl $< --target-pr 10.0 --branch all --csv $*_operating_sweep.csv --output $@
+	$(JULIA) $(SCRIPTS)/plot_compressor_operating_sweep.jl $< --target-pr 10.0 --allow-windmill --branch all --csv $*_operating_sweep.csv --output $@
 
 clean:
 	rm -f $(GENERATED_MEANLINE_TOMLS) $(GENERATED_MAP_TOMLS) $(PERFORMANCE_MAP_PLOTS) $(OPERATING_SWEEP_PLOTS) $(OPERATING_SWEEP_CSV)
