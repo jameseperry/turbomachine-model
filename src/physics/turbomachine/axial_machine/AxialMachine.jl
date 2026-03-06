@@ -4,6 +4,7 @@ export AbstractRowAeroModel
 export RotorAeroModel, StatorAeroModel
 export RowAeroOutput
 export AxialRow, AxialMachineModel
+export meanline_radii, station_area
 export row_aero
 export streamtube_solve
 export sample_streamtube_solve

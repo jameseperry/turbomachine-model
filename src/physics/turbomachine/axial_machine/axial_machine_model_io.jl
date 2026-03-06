@@ -57,27 +57,27 @@ end
 function _row_to_toml_dict(row::AxialRow)
     return Dict{String,Any}(
         "kind" => String(row.kind),
-        "r_mean" => row.r_mean,
+        "r_hub" => row.r_hub,
         "r_tip" => row.r_tip,
-        "omega_sign" => Int(row.omega_sign),
+        "speed_ratio_to_ref" => row.speed_ratio_to_ref,
         "aero" => _aero_to_toml_dict(row.aero),
     )
 end
 
 function _row_from_toml_dict(data::Dict{String,Any})
     haskey(data, "kind") || error("row missing kind")
-    haskey(data, "r_mean") || error("row missing r_mean")
+    haskey(data, "r_hub") || error("row missing r_hub")
     haskey(data, "r_tip") || error("row missing r_tip")
-    haskey(data, "omega_sign") || error("row missing omega_sign")
+    haskey(data, "speed_ratio_to_ref") || error("row missing speed_ratio_to_ref")
     haskey(data, "aero") || error("row missing aero")
     kind = Symbol(String(data["kind"]))
     aero = _aero_from_toml_dict(data["aero"])
     return AxialRow(
         kind,
         aero,
-        Float64(data["r_mean"]),
+        Float64(data["r_hub"]),
         Float64(data["r_tip"]),
-        Int(data["omega_sign"]),
+        Float64(data["speed_ratio_to_ref"]),
     )
 end
 
@@ -114,14 +114,11 @@ function write_toml(
 )
     data = Dict{String,Any}()
     node = _find_or_create_axial_group!(data, group)
-    # Keep format stable for backward compatibility with existing files/scripts.
     node["format"] = "compressor_meanline_model"
-    node["format_version"] = 1
+    node["format_version"] = 2
     node["gamma"] = model.gamma
     node["gas_constant"] = model.gas_constant
-    node["A_ref"] = model.A_ref
-    node["A_station"] = model.A_station
-    node["nu_theta_first_rotor"] = model.nu_theta_first_rotor
+    node["r_tip_ref"] = model.r_tip_ref
     node["m_tip_bounds"] = [model.m_tip_bounds[1], model.m_tip_bounds[2]]
     node["phi_in_bounds"] = [model.phi_in_bounds[1], model.phi_in_bounds[2]]
     node["rows"] = [_row_to_toml_dict(row) for row in model.rows]
@@ -138,29 +135,17 @@ function read_toml(
 )
     data = TOML.parsefile(path)
     node = _find_axial_group(data, group)
-    for key in ("gamma", "gas_constant", "A_ref", "A_station", "rows")
+    for key in ("gamma", "gas_constant", "r_tip_ref", "m_tip_bounds", "phi_in_bounds", "rows")
         haskey(node, key) || error("missing TOML key $(key)")
     end
-    nu_theta_first_rotor = if haskey(node, "nu_theta_first_rotor")
-        Float64(node["nu_theta_first_rotor"])
-    elseif haskey(node, "nu_theta_station1")
-        # Backward-compatibility for older files.
-        Float64(node["nu_theta_station1"])
-    else
-        0.0
-    end
-    m_tip_bounds = haskey(node, "m_tip_bounds") ? (Float64(node["m_tip_bounds"][1]), Float64(node["m_tip_bounds"][2])) : (0.5, 1.2)
-    phi_in_bounds = haskey(node, "phi_in_bounds") ? (Float64(node["phi_in_bounds"][1]), Float64(node["phi_in_bounds"][2])) : (0.2, 0.9)
     rows = AxialRow[_row_from_toml_dict(row_data) for row_data in node["rows"]]
     return AxialMachineModel(
         Float64(node["gamma"]),
         Float64(node["gas_constant"]),
-        Float64(node["A_ref"]),
-        Float64.(node["A_station"]),
+        Float64(node["r_tip_ref"]),
         rows,
-        nu_theta_first_rotor,
-        m_tip_bounds,
-        phi_in_bounds,
+        (Float64(node["m_tip_bounds"][1]), Float64(node["m_tip_bounds"][2])),
+        (Float64(node["phi_in_bounds"][1]), Float64(node["phi_in_bounds"][2])),
     )
 end
 
@@ -180,9 +165,9 @@ function demo_axial_machine_model()
                 k_theta_min=-2.0,
                 k_theta_max=1.1,
             ),
-            0.180,
+            0.140,
             0.220,
-            +1,
+            1.0,
         ),
         AxialRow(
             :stator,
@@ -195,9 +180,9 @@ function demo_axial_machine_model()
                 k_theta_min=-1.0,
                 k_theta_max=2.0,
             ),
-            0.180,
+            0.140,
             0.220,
-            0,
+            0.0,
         ),
         AxialRow(
             :rotor,
@@ -210,9 +195,9 @@ function demo_axial_machine_model()
                 k_theta_min=-2.1,
                 k_theta_max=1.1,
             ),
-            0.180,
+            0.140,
             0.220,
-            +1,
+            1.0,
         ),
         AxialRow(
             :stator,
@@ -225,18 +210,16 @@ function demo_axial_machine_model()
                 k_theta_min=-1.0,
                 k_theta_max=2.0,
             ),
-            0.180,
+            0.140,
             0.220,
-            0,
+            0.0,
         ),
     ]
     return AxialMachineModel(
         1.4,
         287.05,
-        0.060,
-        [1.00, 0.98, 0.96, 0.95, 0.95],
+        0.220,
         rows,
-        0.0,
         (0.01, 1.10),
         (0.01, 0.95),
     )

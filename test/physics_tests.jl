@@ -396,9 +396,32 @@
         meanline = TM.demo_compressor_meanline_model()
         m_mid = 0.5 * (meanline.m_tip_bounds[1] + meanline.m_tip_bounds[2])
         phi_mid = 0.5 * (meanline.phi_in_bounds[1] + meanline.phi_in_bounds[2])
+        radii = AM.meanline_radii(meanline)
+        @test length(radii) == length(meanline.rows)
+        for (r, row) in zip(radii, meanline.rows)
+            @test isapprox(r, 0.5 * (row.r_hub + row.r_tip); rtol=0, atol=1e-12)
+        end
+        @test AM.station_area(meanline, 1) ≈ π * (meanline.rows[1].r_tip^2 - meanline.rows[1].r_hub^2)
+        @test AM.station_area(meanline, length(meanline.rows) + 1) ≈ π * (meanline.rows[end].r_tip^2 - meanline.rows[end].r_hub^2)
+        if length(meanline.rows) >= 2
+            expected_a2 = 0.5 * (
+                π * (meanline.rows[1].r_tip^2 - meanline.rows[1].r_hub^2) +
+                π * (meanline.rows[2].r_tip^2 - meanline.rows[2].r_hub^2)
+            )
+            @test AM.station_area(meanline, 2) ≈ expected_a2
+        end
         meanline_vals = AM.streamtube_solve(meanline, m_mid, phi_mid)
         @test isfinite(meanline_vals.PR)
         @test isfinite(meanline_vals.eta)
+        first_rotor = findfirst(row -> row.kind == :rotor, meanline.rows)
+        idx_ref = isnothing(first_rotor) ? 1 : first_rotor
+        nu_u_ref = meanline.rows[idx_ref].speed_ratio_to_ref * m_mid * radii[idx_ref] / meanline.r_tip_ref
+        nu_x_mid = phi_mid * abs(nu_u_ref)
+        meanline_vals_core = AM.streamtube_solve(meanline, radii, m_mid, nu_x_mid, 0.0)
+        @test isfinite(meanline_vals_core.PR)
+        @test isfinite(meanline_vals_core.eta)
+        @test isapprox(meanline_vals_core.PR, meanline_vals.PR; rtol=1e-12)
+        @test isapprox(meanline_vals_core.eta, meanline_vals.eta; rtol=1e-12)
 
         nd_from_meanline = TM.tabulate_compressor_meanline_model(
             meanline;
@@ -411,13 +434,11 @@
         phi_grid = U.table_ygrid(nd_from_meanline.pr_map)
         m_sample = m_grid[4]
         phi_sample = phi_grid[6]
-        first_rotor = findfirst(row -> row.kind == :rotor, meanline.rows)
-        idx_ref = isnothing(first_rotor) ? 1 : first_rotor
-        r_tip_1 = meanline.rows[idx_ref].r_tip
-        r_mean_1 = meanline.rows[idx_ref].r_mean
+        r_tip_1 = meanline.r_tip_ref
+        r_mean_1 = radii[idx_ref]
         a0 = sqrt(meanline.gamma * meanline.gas_constant * 300.0)
         rho0 = 101_325.0 / (meanline.gas_constant * 300.0)
-        A_phys_1 = meanline.A_ref * meanline.A_station[1]
+        A_phys_1 = AM.station_area(meanline, 1)
         omega_sample = m_sample * a0 / r_tip_1
         mdot_sample = phi_sample * abs(omega_sample) * r_mean_1 * rho0 * A_phys_1
         vals_direct = AM.streamtube_solve(

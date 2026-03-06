@@ -40,38 +40,6 @@ struct RowAeroOutput{T}
     diagnostics::NamedTuple
 end
 
-"""
-Axial row descriptor.
-"""
-struct AxialRow{M<:AbstractRowAeroModel}
-    kind::Symbol
-    aero::M
-    r_mean::Float64
-    r_tip::Float64
-    omega_sign::Int8
-end
-
-function AxialRow(
-    kind::Symbol,
-    aero::AbstractRowAeroModel,
-    r_mean::Real,
-    r_tip::Real,
-    omega_sign::Integer,
-)
-    kind in (:rotor, :stator) || error("row kind must be :rotor or :stator")
-    r_mean > 0 || error("row r_mean must be > 0")
-    r_tip > 0 || error("row r_tip must be > 0")
-    sign_i8 = Int8(omega_sign)
-    if kind == :rotor
-        sign_i8 in Int8[-1, 1] || error("rotor omega_sign must be -1 or +1")
-        aero isa RotorAeroModel || error("rotor rows require RotorAeroModel")
-    else
-        sign_i8 == 0 || error("stator omega_sign must be 0")
-        aero isa StatorAeroModel || error("stator rows require StatorAeroModel")
-    end
-    return AxialRow{typeof(aero)}(kind, aero, Float64(r_mean), Float64(r_tip), sign_i8)
-end
-
 function row_aero(
     model::RotorAeroModel{T},
     nu_x_in::U,

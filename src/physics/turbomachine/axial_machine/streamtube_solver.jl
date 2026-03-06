@@ -42,10 +42,30 @@ function _solve_station_nu_x(
     return (converged=true, nu_x=nu_x)
 end
 
+function _invalid_streamtube_result(n_rows::Int; stall::Bool, choke::Bool, mu::Float64=NaN)
+    n_stations = n_rows + 1
+    return (
+        PR=NaN,
+        eta=NaN,
+        stall=stall,
+        choke=choke,
+        valid=false,
+        mu=mu,
+        tau=fill(NaN, n_stations),
+        pi=fill(NaN, n_stations),
+        nu_theta=fill(NaN, n_stations),
+        nu_x=fill(NaN, n_stations),
+        stall_row=falses(n_rows),
+        choke_row=falses(n_rows),
+        valid_row=trues(n_rows),
+    )
+end
+
 function _advance_row!(
     model::AxialMachineModel,
     row::AxialRow,
     aero::RotorAeroModel,
+    row_radius::Float64,
     station_in::Int,
     station_out::Int,
     mu::Float64,
@@ -57,9 +77,7 @@ function _advance_row!(
     prefer_root::Symbol,
 )
     row.kind == :rotor || error("_advance_row! rotor method requires row.kind == :rotor")
-    idx_ref = model.first_rotor_index
-    r_tip_ref = model.rows[idx_ref].r_tip
-    nu_u = Float64(row.omega_sign) * m_tip * row.r_mean / r_tip_ref
+    nu_u = row.speed_ratio_to_ref * m_tip * row_radius / model.r_tip_ref
     aero_out = row_aero(aero, nu_x[station_in], nu_theta[station_in], nu_u)
     stall = (aero_out.stall_margin <= 0) || !aero_out.valid
     aero_out.valid || return (converged=false, choke=false, stall=stall)
@@ -74,12 +92,12 @@ function _advance_row!(
         mu_at_nu_x = _mass_flow_invariant(
             model.gamma,
             pi_out,
-            model.A_station[station_out],
+            station_area(model, station_out),
             tau_out,
             nu_x_out,
             nu_theta_out,
         )
-        return mu - mu_at_nu_x 
+        return mu - mu_at_nu_x
     end
 
     roots = bracket_bisect_roots(
@@ -112,6 +130,7 @@ function _advance_row!(
     model::AxialMachineModel,
     row::AxialRow,
     aero::StatorAeroModel,
+    _row_radius::Float64,
     station_in::Int,
     station_out::Int,
     mu::Float64,
@@ -119,7 +138,7 @@ function _advance_row!(
     pi::Vector{Float64},
     nu_theta::Vector{Float64},
     nu_x::Vector{Float64},
-    m_tip::Float64,
+    _m_tip::Float64,
     prefer_root::Symbol,
 )
     row.kind == :stator || error("_advance_row! stator method requires row.kind == :stator")
@@ -135,12 +154,11 @@ function _advance_row!(
         mu_at_nu_x = _mass_flow_invariant(
             model.gamma,
             pi_out,
-            model.A_station[station_out],
+            station_area(model, station_out),
             tau_out,
             nu_x_out,
             nu_theta_out,
         )
-        
         return mu - mu_at_nu_x
     end
 
@@ -162,40 +180,41 @@ function _advance_row!(
     return (converged=true, choke=false, stall=stall)
 end
 
+function _nu_u_inlet_reference(
+    model::AxialMachineModel,
+    streamtube_radii::AbstractVector{<:Real},
+    m_tip::Float64,
+)
+    idx_ref = model.first_rotor_index
+    row_ref = model.rows[idx_ref]
+    return row_ref.speed_ratio_to_ref * m_tip * Float64(streamtube_radii[idx_ref]) / model.r_tip_ref
+end
+
 """
-    streamtube_solve(model, m_tip, phi_in; prefer_root=:low)
+    streamtube_solve(model, streamtube_radii, m_tip, nu_x_inlet, nu_theta_inlet; prefer_root=:low)
 
 Run the axial row-marching solve in non-dimensional coordinates.
-
-Inputs:
-- `model::AxialMachineModel`: row/station geometry and aero closures.
-- `m_tip`: non-dimensional reference rotor-tip speed
-  (`m_tip = omega * r_tip_ref / a0_in`).
-- `phi_in`: inlet flow coefficient at station 1
-  (`phi_in = Vx_1 / U_m1`).
-- `prefer_root`: root-selection mode (`:low` or `:high`) when multiple
-  continuity roots exist at a station.
-
-Returns a named tuple with:
-- `PR`: total-pressure ratio (`Pt_out / Pt_in`), or `NaN` if invalid.
-- `eta`: adiabatic efficiency proxy from `(PR, tau_out)`, or `NaN` if invalid.
-- `stall::Bool`: true if any row reports stall/invalid aero margin.
-- `choke::Bool`: true if any station continuity solve fails.
-- `valid::Bool`: true when marching completed and outputs are finite/physical.
-- `mu`: conserved corrected massflow-like invariant used by the station solve.
-- `tau`, `pi`, `nu_theta`, `nu_x`: per-station state histories.
-- `stall_row`, `choke_row`, `valid_row`: per-row diagnostic flags.
 """
 function streamtube_solve(
     model::AxialMachineModel,
+    streamtube_radii::AbstractVector{<:Real},
     m_tip::Real,
-    phi_in::Real;
+    nu_x_inlet::Real,
+    nu_theta_inlet::Real;
     prefer_root::Symbol=:low,
 )
     m_tip_f = Float64(m_tip)
-    phi_in_f = Float64(phi_in)
+    nu_x_inlet_f = Float64(nu_x_inlet)
     n_rows = length(model.rows)
     n_stations = n_rows + 1
+    length(streamtube_radii) == n_rows ||
+        error("streamtube_radii length must match number of rows")
+    radii = Float64.(streamtube_radii)
+    for (k, row) in pairs(model.rows)
+        row.r_hub <= radii[k] <= row.r_tip ||
+            error("streamtube_radii[$k]=$(radii[k]) must lie in [r_hub, r_tip]=[$(row.r_hub), $(row.r_tip)]")
+    end
+    nu_x_inlet_f > 0 || error("nu_x_inlet must be > 0")
 
     tau = fill(NaN, n_stations)
     pi = fill(NaN, n_stations)
@@ -207,42 +226,10 @@ function streamtube_solve(
 
     tau[1] = 1.0
     pi[1] = 1.0
-    nu_theta[1] = model.nu_theta_first_rotor
-    idx_ref = model.first_rotor_index
-    row_ref = model.rows[idx_ref]
-    nu_u1 = Float64(row_ref.omega_sign) * m_tip_f * row_ref.r_mean / row_ref.r_tip
-    abs(nu_u1) > 0 || return (
-        PR=NaN,
-        eta=NaN,
-        stall=true,
-        choke=true,
-        valid=false,
-        mu=NaN,
-        tau=tau,
-        pi=pi,
-        nu_theta=nu_theta,
-        nu_x=nu_x,
-        stall_row=stall_row,
-        choke_row=choke_row,
-        valid_row=valid_row,
-    )
-    nu_x[1] = phi_in_f * abs(nu_u1)
-    mu = _mass_flow_invariant(model.gamma, 1.0, model.A_station[1], 1.0, nu_x[1], nu_theta[1])
-    isfinite(mu) || return (
-        PR=NaN,
-        eta=NaN,
-        stall=true,
-        choke=true,
-        valid=false,
-        mu=NaN,
-        tau=tau,
-        pi=pi,
-        nu_theta=nu_theta,
-        nu_x=nu_x,
-        stall_row=stall_row,
-        choke_row=choke_row,
-        valid_row=valid_row,
-    )
+    nu_theta[1] = Float64(nu_theta_inlet)
+    nu_x[1] = nu_x_inlet_f
+    mu = _mass_flow_invariant(model.gamma, 1.0, station_area(model, 1), 1.0, nu_x[1], nu_theta[1])
+    isfinite(mu) || return _invalid_streamtube_result(n_rows; stall=true, choke=true, mu=NaN)
 
     for k in 1:n_rows
         row = model.rows[k]
@@ -253,7 +240,7 @@ function streamtube_solve(
             model.gamma,
             mu,
             pi[station_in],
-            model.A_station[station_in],
+            station_area(model, station_in),
             tau[station_in],
             nu_theta[station_in];
             prefer=prefer_root,
@@ -269,6 +256,7 @@ function streamtube_solve(
             model,
             row,
             row.aero,
+            radii[k],
             station_in,
             station_out,
             mu,
@@ -334,21 +322,37 @@ function streamtube_solve(
 end
 
 """
-    sample_streamtube_solve(model, speed_grid, flow_grid; flow_min=nothing, flow_max=nothing, prefer_root=:low, is_feasible)
+    streamtube_solve(model, m_tip, phi_in; streamtube_radii=meanline_radii(model), nu_theta_inlet=0.0, prefer_root=:low)
 
-Sample `streamtube_solve` over a Cartesian grid of speed/flow coordinates.
+Phi-facing convenience wrapper around the nu_x-native solver.
+"""
+function streamtube_solve(
+    model::AxialMachineModel,
+    m_tip::Real,
+    phi_in::Real;
+    streamtube_radii::AbstractVector{<:Real}=meanline_radii(model),
+    nu_theta_inlet::Real=0.0,
+    prefer_root::Symbol=:low,
+)
+    m_tip_f = Float64(m_tip)
+    phi_in_f = Float64(phi_in)
+    nu_u_ref = _nu_u_inlet_reference(model, streamtube_radii, m_tip_f)
+    abs(nu_u_ref) > 0 || return _invalid_streamtube_result(length(model.rows); stall=true, choke=true)
+    nu_x_inlet = phi_in_f * abs(nu_u_ref)
+    return streamtube_solve(
+        model,
+        streamtube_radii,
+        m_tip_f,
+        nu_x_inlet,
+        Float64(nu_theta_inlet);
+        prefer_root=prefer_root,
+    )
+end
 
-Arguments:
-- `speed_grid`: x-axis sample points (e.g., `m_tip`).
-- `flow_grid`: y-axis sample points (e.g., `phi_in`).
-- `flow_min`, `flow_max`: optional per-speed flow bounds. If provided, each
-  sampled flow is clamped to `[flow_min[i], flow_max[i]]` before evaluation.
-- `prefer_root`: root branch selector passed to `streamtube_solve`.
-- `is_feasible`: predicate used to validate each sampled solve.
+"""
+    sample_streamtube_solve(model, speed_grid, flow_grid; flow_min=nothing, flow_max=nothing, streamtube_radii=meanline_radii(model), nu_theta_inlet=0.0, prefer_root=:low, is_feasible)
 
-Returns:
-- `pr_table`: sampled `PR` values.
-- `eta_table`: sampled `eta` values.
+Sample the phi-facing streamtube solver over a Cartesian grid of speed/flow coordinates.
 """
 function sample_streamtube_solve(
     model::AxialMachineModel,
@@ -356,6 +360,8 @@ function sample_streamtube_solve(
     flow_grid::AbstractVector{<:Real};
     flow_min::Union{Nothing,AbstractVector{<:Real}}=nothing,
     flow_max::Union{Nothing,AbstractVector{<:Real}}=nothing,
+    streamtube_radii::AbstractVector{<:Real}=meanline_radii(model),
+    nu_theta_inlet::Real=0.0,
     prefer_root::Symbol=:low,
     is_feasible::Function=(vals -> vals.valid && isfinite(vals.PR) && isfinite(vals.eta)),
 )
@@ -380,7 +386,14 @@ function sample_streamtube_solve(
             if has_limits
                 flow = clamp(flow, Float64(flow_min[i]), Float64(flow_max[i]))
             end
-            vals = streamtube_solve(model, speed, flow; prefer_root=prefer_root)
+            vals = streamtube_solve(
+                model,
+                speed,
+                flow;
+                streamtube_radii=streamtube_radii,
+                nu_theta_inlet=nu_theta_inlet,
+                prefer_root=prefer_root,
+            )
             is_feasible(vals) ||
                 error("streamtube sampling produced invalid value at speed=$(speed), flow=$(flow)")
             pr_table[i, j] = vals.PR

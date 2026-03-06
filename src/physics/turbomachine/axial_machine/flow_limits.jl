@@ -1,20 +1,7 @@
 """
-    feasible_flow_limits(model, speed_grid, flow_lo, flow_hi; boundary_resolution=401, prefer_root=:low, is_feasible)
+    feasible_flow_limits(model, speed_grid, flow_lo, flow_hi; boundary_resolution=401, streamtube_radii=meanline_radii(model), nu_theta_inlet=0.0, prefer_root=:low, is_feasible)
 
-Scan a flow coordinate at each speed and return feasible-flow bounds.
-
-Inputs:
-- `model::AxialMachineModel`: axial machine model to evaluate.
-- `speed_grid`: speeds to evaluate.
-- `flow_lo`, `flow_hi`: scan interval for the flow coordinate.
-- `boundary_resolution`: number of probe points on `[flow_lo, flow_hi]`.
-- `prefer_root`: root branch selection for `streamtube_solve`.
-- `is_feasible(result)`: predicate that marks a solver result as feasible.
-
-Returns:
-- `valid_speed_idx`: indices in `speed_grid` with at least one feasible flow.
-- `flow_min`: first feasible flow per valid speed (low-flow boundary).
-- `flow_max`: last feasible flow per valid speed (high-flow boundary).
+Scan inlet flow coefficient at each speed and return feasible-flow bounds.
 """
 function feasible_flow_limits(
     model::AxialMachineModel,
@@ -22,6 +9,8 @@ function feasible_flow_limits(
     flow_lo::Real,
     flow_hi::Real;
     boundary_resolution::Int=401,
+    streamtube_radii::AbstractVector{<:Real}=meanline_radii(model),
+    nu_theta_inlet::Real=0.0,
     prefer_root::Symbol=:low,
     is_feasible::Function=(result -> getproperty(result, :valid)),
 )
@@ -34,10 +23,21 @@ function feasible_flow_limits(
     flow_min = Float64[]
     flow_max = Float64[]
 
-    for (i, speed) in pairs(speed_grid)
+    for (i, speed_raw) in pairs(speed_grid)
+        speed = Float64(speed_raw)
+        nu_u_ref = _nu_u_inlet_reference(model, streamtube_radii, speed)
+        abs(nu_u_ref) > 0 || continue
         feasible_flows = Float64[]
         for flow in flow_probe
-            result = streamtube_solve(model, Float64(speed), flow; prefer_root=prefer_root)
+            nu_x_inlet = flow * abs(nu_u_ref)
+            result = streamtube_solve(
+                model,
+                streamtube_radii,
+                speed,
+                nu_x_inlet,
+                Float64(nu_theta_inlet);
+                prefer_root=prefer_root,
+            )
             if is_feasible(result)
                 push!(feasible_flows, flow)
             end

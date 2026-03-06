@@ -51,9 +51,9 @@ function _build_nd_tabulated_map(
     phi_choke::Vector{Float64},
 )
     idx_ref = model.first_rotor_index
-    tip_radius_inlet = model.rows[idx_ref].r_tip
-    mean_radius_inlet = model.rows[idx_ref].r_mean
-    inlet_area = model.A_ref * model.A_station[1]
+    tip_radius_inlet = model.r_tip_ref
+    mean_radius_inlet = AxialMachine.meanline_radii(model)[idx_ref]
+    inlet_area = AxialMachine.station_area(model, 1)
     return NondimensionalPerformanceMap(
         model.gamma,
         model.gas_constant,
