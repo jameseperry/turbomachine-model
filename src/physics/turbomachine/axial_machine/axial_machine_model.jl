@@ -2,8 +2,6 @@
 Axial row descriptor.
 
 Field meanings:
-- `kind`: row category (`:rotor` or `:stator`) used for validation and
-  interpretation of kinematics.
 - `aero`: aerodynamic closure model for this row (`BladeAeroModel`) that maps
   inlet flow state to turning/loss outputs.
 - `r_hub`: hub radius [m] of the annulus represented by this row.
@@ -13,7 +11,6 @@ Field meanings:
   counter-rotation, and values with magnitude > 1 for geared-up rows.
 """
 struct AxialRow
-    kind::Symbol
     aero::BladeAeroModel
     r_hub::Float64
     r_tip::Float64
@@ -21,24 +18,16 @@ struct AxialRow
 end
 
 function AxialRow(
-    kind::Symbol,
     aero::BladeAeroModel,
     r_hub::Real,
     r_tip::Real,
     speed_ratio_to_ref::Real,
 )
-    kind in (:rotor, :stator) || error("row kind must be :rotor or :stator")
     r_hub >= 0 || error("row r_hub must be >= 0")
     r_tip > 0 || error("row r_tip must be > 0")
     r_tip > r_hub || error("row r_tip must be > r_hub")
     speed_ratio = Float64(speed_ratio_to_ref)
-    if kind == :rotor
-        speed_ratio != 0.0 || error("rotor speed_ratio_to_ref must be nonzero")
-    else
-        speed_ratio == 0.0 || error("stator speed_ratio_to_ref must be 0.0")
-    end
     return AxialRow(
-        kind,
         aero,
         Float64(r_hub),
         Float64(r_tip),
@@ -55,10 +44,12 @@ Field meanings:
 - `gas_constant`: specific gas constant `R` [J/(kg*K)] for the working fluid.
 - `r_tip_ref`: reference rotor-tip radius [m] used for non-dimensional speed
   scaling (`m_tip = omega_ref * r_tip_ref / a0_in`).
+- `r_flow_ref`: reference radius [m] used to define inlet flow coefficient in
+  phi-facing wrappers (`phi_in = nu_x_inlet / |nu_u_ref|`).
+- `speed_ratio_ref`: reference blade-speed ratio (`omega_ref_row / omega_ref`)
+  used with `r_flow_ref` to compute `nu_u_ref` in phi-facing wrappers.
 - `rows`: ordered row models from inlet to outlet. Each row advances the
   solution from station `k` to `k+1`.
-- `first_rotor_index`: cached index of the first rotor row. If no rotor row is
-  present, this falls back to `1` for compatibility with existing behavior.
 - `m_tip_bounds`: tabulation/operating domain bounds for reference tip Mach-like
   speed.
 - `phi_in_bounds`: tabulation/operating domain bounds for inlet flow
@@ -68,8 +59,9 @@ struct AxialMachineModel
     gamma::Float64
     gas_constant::Float64
     r_tip_ref::Float64
+    r_flow_ref::Float64
+    speed_ratio_ref::Float64
     rows::Vector{AxialRow}
-    first_rotor_index::Int
     m_tip_bounds::Tuple{Float64,Float64}
     phi_in_bounds::Tuple{Float64,Float64}
 end
@@ -81,6 +73,9 @@ function AxialMachineModel(
     rows::Vector{AxialRow},
     m_tip_bounds::Tuple{<:Real,<:Real},
     phi_in_bounds::Tuple{<:Real,<:Real},
+    ;
+    r_flow_ref::Union{Nothing,Real}=nothing,
+    speed_ratio_ref::Union{Nothing,Real}=nothing,
 )
     gamma > 1 || error("gamma must be > 1")
     gas_constant > 0 || error("gas_constant must be > 0")
@@ -90,15 +85,22 @@ function AxialMachineModel(
     phi_lo, phi_hi = Float64(phi_in_bounds[1]), Float64(phi_in_bounds[2])
     m_hi > m_lo > 0 || error("m_tip_bounds must satisfy 0 < lo < hi")
     phi_hi > phi_lo > 0 || error("phi_in_bounds must satisfy 0 < lo < hi")
-    first_rotor_idx = let idx = findfirst(row -> row.kind == :rotor, rows)
+    idx_ref = let idx = findfirst(row -> row.speed_ratio_to_ref != 0.0, rows)
         isnothing(idx) ? 1 : idx
     end
+    default_r_flow_ref = 0.5 * (rows[idx_ref].r_hub + rows[idx_ref].r_tip)
+    default_speed_ratio_ref = rows[idx_ref].speed_ratio_to_ref
+    r_flow_ref_f = isnothing(r_flow_ref) ? default_r_flow_ref : Float64(r_flow_ref)
+    speed_ratio_ref_f = isnothing(speed_ratio_ref) ? default_speed_ratio_ref : Float64(speed_ratio_ref)
+    r_flow_ref_f > 0 || error("r_flow_ref must be > 0")
+    speed_ratio_ref_f != 0 || error("speed_ratio_ref must be nonzero")
     return AxialMachineModel(
         Float64(gamma),
         Float64(gas_constant),
         Float64(r_tip_ref),
+        r_flow_ref_f,
+        speed_ratio_ref_f,
         rows,
-        first_rotor_idx,
         (m_lo, m_hi),
         (phi_lo, phi_hi),
     )

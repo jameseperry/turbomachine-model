@@ -33,7 +33,6 @@ end
 
 function _row_to_toml_dict(row::AxialRow)
     return Dict{String,Any}(
-        "kind" => String(row.kind),
         "r_hub" => row.r_hub,
         "r_tip" => row.r_tip,
         "speed_ratio_to_ref" => row.speed_ratio_to_ref,
@@ -42,15 +41,12 @@ function _row_to_toml_dict(row::AxialRow)
 end
 
 function _row_from_toml_dict(data::Dict{String,Any})
-    haskey(data, "kind") || error("row missing kind")
     haskey(data, "r_hub") || error("row missing r_hub")
     haskey(data, "r_tip") || error("row missing r_tip")
     haskey(data, "speed_ratio_to_ref") || error("row missing speed_ratio_to_ref")
     haskey(data, "aero") || error("row missing aero")
-    kind = Symbol(String(data["kind"]))
     aero = _aero_from_toml_dict(data["aero"])
     return AxialRow(
-        kind,
         aero,
         Float64(data["r_hub"]),
         Float64(data["r_tip"]),
@@ -92,10 +88,12 @@ function write_toml(
     data = Dict{String,Any}()
     node = _find_or_create_axial_group!(data, group)
     node["format"] = "compressor_meanline_model"
-    node["format_version"] = 3
+    node["format_version"] = 5
     node["gamma"] = model.gamma
     node["gas_constant"] = model.gas_constant
     node["r_tip_ref"] = model.r_tip_ref
+    node["r_flow_ref"] = model.r_flow_ref
+    node["speed_ratio_ref"] = model.speed_ratio_ref
     node["m_tip_bounds"] = [model.m_tip_bounds[1], model.m_tip_bounds[2]]
     node["phi_in_bounds"] = [model.phi_in_bounds[1], model.phi_in_bounds[2]]
     node["rows"] = [_row_to_toml_dict(row) for row in model.rows]
@@ -112,7 +110,7 @@ function read_toml(
 )
     data = TOML.parsefile(path)
     node = _find_axial_group(data, group)
-    for key in ("gamma", "gas_constant", "r_tip_ref", "m_tip_bounds", "phi_in_bounds", "rows")
+    for key in ("gamma", "gas_constant", "r_tip_ref", "r_flow_ref", "speed_ratio_ref", "m_tip_bounds", "phi_in_bounds", "rows")
         haskey(node, key) || error("missing TOML key $(key)")
     end
     rows = AxialRow[_row_from_toml_dict(row_data) for row_data in node["rows"]]
@@ -123,6 +121,8 @@ function read_toml(
         rows,
         (Float64(node["m_tip_bounds"][1]), Float64(node["m_tip_bounds"][2])),
         (Float64(node["phi_in_bounds"][1]), Float64(node["phi_in_bounds"][2])),
+        r_flow_ref=Float64(node["r_flow_ref"]),
+        speed_ratio_ref=Float64(node["speed_ratio_ref"]),
     )
 end
 
@@ -132,7 +132,6 @@ Demo axial-machine model for development/testing.
 function demo_axial_compressor_model()
     rows = AxialRow[
         AxialRow(
-            :rotor,
             rotor_aero_model(
                 theta_ref=-0.55,
                 theta_incidence_sensitivity=0.62,
@@ -147,7 +146,6 @@ function demo_axial_compressor_model()
             1.0,
         ),
         AxialRow(
-            :stator,
             stator_aero_model(
                 theta_ref=0.45,
                 theta_incidence_sensitivity=0.70,
@@ -162,7 +160,6 @@ function demo_axial_compressor_model()
             0.0,
         ),
         AxialRow(
-            :rotor,
             rotor_aero_model(
                 theta_ref=-0.50,
                 theta_incidence_sensitivity=0.60,
@@ -177,7 +174,6 @@ function demo_axial_compressor_model()
             1.0,
         ),
         AxialRow(
-            :stator,
             stator_aero_model(
                 theta_ref=0.45,
                 theta_incidence_sensitivity=0.70,

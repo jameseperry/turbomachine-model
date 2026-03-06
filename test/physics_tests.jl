@@ -465,9 +465,7 @@
         meanline_vals = AM.streamtube_solve_with_phi(meanline, m_mid, phi_mid)
         @test isfinite(meanline_vals.PR)
         @test isfinite(meanline_vals.eta)
-        first_rotor = findfirst(row -> row.kind == :rotor, meanline.rows)
-        idx_ref = isnothing(first_rotor) ? 1 : first_rotor
-        nu_u_ref = meanline.rows[idx_ref].speed_ratio_to_ref * m_mid * radii[idx_ref] / meanline.r_tip_ref
+        nu_u_ref = meanline.speed_ratio_ref * m_mid * meanline.r_flow_ref / meanline.r_tip_ref
         nu_x_mid = phi_mid * abs(nu_u_ref)
         meanline_vals_core = AM.streamtube_solve(meanline, radii, m_mid, nu_x_mid, 0.0)
         @test isfinite(meanline_vals_core.PR)
@@ -530,7 +528,7 @@
         m_sample = m_grid[4]
         phi_sample = phi_grid[6]
         r_tip_1 = meanline.r_tip_ref
-        r_mean_1 = radii[idx_ref]
+        r_mean_1 = abs(meanline.speed_ratio_ref) * meanline.r_flow_ref
         a0 = sqrt(meanline.gamma * meanline.gas_constant * 300.0)
         rho0 = 101_325.0 / (meanline.gas_constant * 300.0)
         A_phys_1 = AM.station_area(meanline, 1)

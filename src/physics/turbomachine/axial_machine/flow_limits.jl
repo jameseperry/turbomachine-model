@@ -25,9 +25,7 @@ function feasible_flow_limits(
 
     for (i, speed_raw) in pairs(speed_grid)
         speed = Float64(speed_raw)
-        idx_ref = model.first_rotor_index
-        row_ref = model.rows[idx_ref]
-        nu_u_ref = row_ref.speed_ratio_to_ref * speed * Float64(streamtube_radii[idx_ref]) / model.r_tip_ref
+        nu_u_ref = model.speed_ratio_ref * speed * model.r_flow_ref / model.r_tip_ref
         abs(nu_u_ref) > 0 || continue
         feasible_flows = Float64[]
         for flow in flow_probe

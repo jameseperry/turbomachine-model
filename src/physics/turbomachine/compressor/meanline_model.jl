@@ -50,9 +50,8 @@ function _build_nd_tabulated_map(
     phi_surge::Vector{Float64},
     phi_choke::Vector{Float64},
 )
-    idx_ref = model.first_rotor_index
     tip_radius_inlet = model.r_tip_ref
-    mean_radius_inlet = AxialMachine.meanline_radii(model)[idx_ref]
+    mean_radius_inlet = abs(model.speed_ratio_ref) * model.r_flow_ref
     inlet_area = AxialMachine.station_area(model, 1)
     return NondimensionalPerformanceMap(
         model.gamma,
@@ -105,8 +104,7 @@ function _resolve_dim_tabulation_grids(
         Float64(omega_ref_for_phi)
     omega_ref_for_phi_f > 0 || error("omega_ref_for_phi must be > 0")
 
-    idx_ref = model.first_rotor_index
-    mean_radius_inlet = AxialMachine.meanline_radii(model)[idx_ref]
+    mean_radius_inlet = abs(model.speed_ratio_ref) * model.r_flow_ref
     inlet_area = AxialMachine.station_area(model, 1)
     rho0_in_ref = Pt_in_ref / (model.gas_constant * Tt_in_ref)
     corr_fac = sqrt(Tt_in_ref / Tt_ref) / (Pt_in_ref / Pt_ref)
@@ -228,8 +226,7 @@ function tabulate_compressor_meanline_model_dim(
         Pt_ref=Pt_ref,
     )
 
-    idx_ref = model.first_rotor_index
-    mean_radius_inlet = AxialMachine.meanline_radii(model)[idx_ref]
+    mean_radius_inlet = abs(model.speed_ratio_ref) * model.r_flow_ref
     inlet_area = AxialMachine.station_area(model, 1)
     nd_grids = physical_grids_to_nondimensional_grids(
         physical_grids.omega_grid,

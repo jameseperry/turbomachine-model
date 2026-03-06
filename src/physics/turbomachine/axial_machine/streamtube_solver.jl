@@ -358,13 +358,11 @@ function streamtube_solve_with_phi(
 )
     m_tip_f = Float64(m_tip)
     phi_in_f = Float64(phi_in)
-    # The phi wrapper uses the first-rotor reference speed at the chosen streamtube
-    # radius to map flow coefficient to inlet axial velocity:
+    # The phi wrapper uses the model's explicit flow-reference speed/radius
+    # to map flow coefficient to inlet axial velocity:
     #   phi_in = nu_x_inlet / |nu_u_ref|  =>  nu_x_inlet = phi_in * |nu_u_ref|
-    # where nu_u_ref is the non-dimensional blade speed of the reference rotor row.
-    idx_ref = model.first_rotor_index
-    row_ref = model.rows[idx_ref]
-    nu_u_ref = row_ref.speed_ratio_to_ref * m_tip_f * Float64(streamtube_radii[idx_ref]) / model.r_tip_ref
+    # where nu_u_ref is the non-dimensional blade speed at `r_flow_ref`.
+    nu_u_ref = model.speed_ratio_ref * m_tip_f * model.r_flow_ref / model.r_tip_ref
     abs(nu_u_ref) > 0 || return _invalid_streamtube_result(length(model.rows); stall=true, choke=true)
     nu_x_inlet = phi_in_f * abs(nu_u_ref)
     return streamtube_solve(
