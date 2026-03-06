@@ -3,6 +3,7 @@ Tabulated compressor performance map implementation (non-dimensional form).
 """
 
 import ..NondimensionalPerformanceMap
+using ....Utility: linear_evaluate
 const NonDimensionalTabulatedCompressorPerformanceMap = NondimensionalPerformanceMap
 
 _m_tip_grid(map::NondimensionalPerformanceMap) = table_xgrid(map.pr_map)
@@ -10,20 +11,6 @@ _phi_in_grid(map::NondimensionalPerformanceMap) = table_ygrid(map.pr_map)
 _pr_table(map::NondimensionalPerformanceMap) = table_values(map.pr_map)
 _eta_table(map::NondimensionalPerformanceMap) = table_values(map.eta_map)
 _interpolation_kind(map::NondimensionalPerformanceMap) = table_interpolation(map.pr_map)
-
-function _interp_linear_1d_clamped(xgrid::AbstractVector{<:Real}, ygrid::AbstractVector{<:Real}, x::Real)
-    x1 = first(xgrid)
-    x2 = last(xgrid)
-    xc = clamp(x, x1, x2)
-    i_hi = searchsortedfirst(xgrid, xc)
-    i_hi <= 1 && return ygrid[1]
-    i_hi > length(xgrid) && return ygrid[end]
-    i_lo = i_hi - 1
-    xl = xgrid[i_lo]
-    xr = xgrid[i_hi]
-    t = (xc - xl) / (xr - xl)
-    return (1 - t) * ygrid[i_lo] + t * ygrid[i_hi]
-end
 
 """Map-coordinate speed for non-dimensional maps (`M_tip`)."""
 function _map_speed_coordinate_from_stagnation(
@@ -77,8 +64,8 @@ function _compressor_performance_map(
     phi_in = flow_coord
     PR = table_evaluate(map.pr_map, m_tip, phi_in)
     eta = table_evaluate(map.eta_map, m_tip, phi_in)
-    phi_s = _interp_linear_1d_clamped(_m_tip_grid(map), map.phi_surge, m_tip)
-    phi_c = _interp_linear_1d_clamped(_m_tip_grid(map), map.phi_choke, m_tip)
+    phi_s = linear_evaluate(_m_tip_grid(map), map.phi_surge, m_tip)
+    phi_c = linear_evaluate(_m_tip_grid(map), map.phi_choke, m_tip)
     return (
         PR=PR,
         eta=eta,
@@ -100,17 +87,23 @@ function performance_from_stagnation(
     Tt_in::Real,
     Pt_in::Real,
 )
-    speed_coord = _map_speed_coordinate_from_stagnation(map, omega, Tt_in, Pt_in)
-    flow_coord = _map_flow_coordinate_from_stagnation(map, omega, mdot, Tt_in, Pt_in)
-    vals = _compressor_performance_map(map, speed_coord, flow_coord)
+    m_tip  = _map_speed_coordinate_from_stagnation(map, omega, Tt_in, Pt_in)
+    phi_in = _map_flow_coordinate_from_stagnation(map, omega, mdot, Tt_in, Pt_in)
+
+    PR = table_evaluate(map.pr_map, m_tip, phi_in)
+    eta = table_evaluate(map.eta_map, m_tip, phi_in)
+
+    phi_s = linear_evaluate(_m_tip_grid(map), map.phi_surge, m_tip)
+    phi_c = linear_evaluate(_m_tip_grid(map), map.phi_choke, m_tip)
+
     return (
-        PR=vals.PR,
-        eta=vals.eta,
-        speed_coord=speed_coord,
-        flow_coord=flow_coord,
-        stall=vals.stall,
-        choke=vals.choke,
-        valid=vals.valid,
+        PR=PR,
+        eta=eta,
+        speed_coord=m_tip,
+        flow_coord=phi_in,
+        stall=(phi_in < phi_s),
+        choke=(phi_in > phi_c),
+        valid=(phi_s <= phi_in <= phi_c),
     )
 end
 
@@ -132,8 +125,8 @@ function performance_map_domain(
     mdot_vals = Float64[]
     for m_tip in _m_tip_grid(map)
         omega = m_tip * a0_in / map.tip_radius_inlet
-        phi_s = _interp_linear_1d_clamped(_m_tip_grid(map), map.phi_surge, m_tip)
-        phi_c = _interp_linear_1d_clamped(_m_tip_grid(map), map.phi_choke, m_tip)
+        phi_s = linear_evaluate(_m_tip_grid(map), map.phi_surge, m_tip)
+        phi_c = linear_evaluate(_m_tip_grid(map), map.phi_choke, m_tip)
         push!(mdot_vals, _physical_mdot_from_map_flow_coordinate(map, omega, phi_s, Tt_in, Pt_in))
         push!(mdot_vals, _physical_mdot_from_map_flow_coordinate(map, omega, phi_c, Tt_in, Pt_in))
     end
@@ -144,12 +137,12 @@ function performance_map_domain(
         mdot_flow_range=(
             surge=(omega -> begin
                 m_tip = _map_speed_coordinate_from_stagnation(map, omega, Tt_in, Pt_in)
-                phi_s = _interp_linear_1d_clamped(_m_tip_grid(map), map.phi_surge, m_tip)
+                phi_s = linear_evaluate(_m_tip_grid(map), map.phi_surge, m_tip)
                 _physical_mdot_from_map_flow_coordinate(map, omega, phi_s, Tt_in, Pt_in)
             end),
             choke=(omega -> begin
                 m_tip = _map_speed_coordinate_from_stagnation(map, omega, Tt_in, Pt_in)
-                phi_c = _interp_linear_1d_clamped(_m_tip_grid(map), map.phi_choke, m_tip)
+                phi_c = linear_evaluate(_m_tip_grid(map), map.phi_choke, m_tip)
                 _physical_mdot_from_map_flow_coordinate(map, omega, phi_c, Tt_in, Pt_in)
             end),
         ),

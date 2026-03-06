@@ -2,27 +2,126 @@
 Compressor map conversion helpers between dimensional and non-dimensional tabulated forms.
 """
 
+using ....Utility: linear_evaluate
+
 @inline function _linspace_inclusive(x_lo::Real, x_hi::Real, n::Int)
     n >= 2 || error("grid length must be at least 2")
     return collect(range(Float64(x_lo), Float64(x_hi), length=n))
 end
 
-@inline function _interp_linear_1d_clamped_conversion(
-    xgrid::AbstractVector{<:Real},
-    ygrid::AbstractVector{<:Real},
-    x::Real,
+"""
+    corrected_grids_to_physical_grids(omega_corr_grid, mdot_corr_grid; Tt_in, Pt_in, Tt_ref, Pt_ref)
+
+Convert corrected-coordinate grid axes into physical-coordinate grid axes at a given inlet
+state. The returned vectors are:
+
+- `omega_grid`: physical shaft speed [rad/s]
+- `mdot_grid`: physical mass flow [kg/s]
+
+Notes:
+- In the current tabulated compressor map convention, speed coordinate is already physical,
+  so `omega_grid == omega_corr_grid`.
+- `mdot_grid` depends on inlet state and correction reference via:
+  `mdot = mdot_corr * (Pt_in / Pt_ref) / sqrt(Tt_in / Tt_ref)`.
+"""
+function corrected_grids_to_physical_grids(
+    omega_corr_grid::AbstractVector{<:Real},
+    mdot_corr_grid::AbstractVector{<:Real};
+    Tt_in::Real,
+    Pt_in::Real,
+    Tt_ref::Real,
+    Pt_ref::Real,
 )
-    x1 = first(xgrid)
-    x2 = last(xgrid)
-    xc = clamp(x, x1, x2)
-    i_hi = searchsortedfirst(xgrid, xc)
-    i_hi <= 1 && return ygrid[1]
-    i_hi > length(xgrid) && return ygrid[end]
-    i_lo = i_hi - 1
-    xl = xgrid[i_lo]
-    xr = xgrid[i_hi]
-    t = (xc - xl) / (xr - xl)
-    return (1 - t) * ygrid[i_lo] + t * ygrid[i_hi]
+    Tt_in > 0 || error("Tt_in must be > 0")
+    Pt_in > 0 || error("Pt_in must be > 0")
+    Tt_ref > 0 || error("Tt_ref must be > 0")
+    Pt_ref > 0 || error("Pt_ref must be > 0")
+
+    omega_grid = Float64.(omega_corr_grid)
+    mdot_corr = Float64.(mdot_corr_grid)
+    length(omega_grid) >= 2 || error("omega_corr_grid must have at least 2 points")
+    length(mdot_corr) >= 2 || error("mdot_corr_grid must have at least 2 points")
+    issorted(omega_grid) || error("omega_corr_grid must be sorted ascending")
+    issorted(mdot_corr) || error("mdot_corr_grid must be sorted ascending")
+    all(omega_grid .> 0) || error("omega_corr_grid values must be strictly positive")
+
+    scale = (Float64(Pt_in) / Float64(Pt_ref)) / sqrt(Float64(Tt_in) / Float64(Tt_ref))
+    mdot_grid = mdot_corr .* scale
+    return (omega_grid=omega_grid, mdot_grid=mdot_grid)
+end
+
+"""
+    corrected_grids_to_physical_grids(map, omega_corr_grid, mdot_corr_grid, Tt_in, Pt_in)
+
+Map-aware overload using `map.Tt_ref` and `map.Pt_ref`.
+"""
+function corrected_grids_to_physical_grids(
+    map::TabulatedCompressorPerformanceMap,
+    omega_corr_grid::AbstractVector{<:Real},
+    mdot_corr_grid::AbstractVector{<:Real},
+    Tt_in::Real,
+    Pt_in::Real,
+)
+    return corrected_grids_to_physical_grids(
+        omega_corr_grid,
+        mdot_corr_grid;
+        Tt_in=Tt_in,
+        Pt_in=Pt_in,
+        Tt_ref=map.Tt_ref,
+        Pt_ref=map.Pt_ref,
+    )
+end
+
+"""
+    physical_grids_to_nondimensional_grids(omega_grid, mdot_grid; gamma, gas_constant, tip_radius_inlet, mean_radius_inlet, inlet_area, Tt_in, Pt_in, omega_ref_for_phi)
+
+Convert physical-coordinate grid axes into non-dimensional grid axes:
+
+- `m_tip_grid = omega * tip_radius_inlet / a0_in`
+- `phi_in_grid = mdot / (rho0_in * inlet_area * omega_ref_for_phi * mean_radius_inlet)`
+
+where `a0_in = sqrt(gamma * gas_constant * Tt_in)` and
+`rho0_in = Pt_in / (gas_constant * Tt_in)`.
+
+`omega_ref_for_phi` explicitly defines the speed used to collapse a 1D `mdot` axis into a
+1D `phi` axis.
+"""
+function physical_grids_to_nondimensional_grids(
+    omega_grid::AbstractVector{<:Real},
+    mdot_grid::AbstractVector{<:Real};
+    gamma::Real,
+    gas_constant::Real,
+    tip_radius_inlet::Real,
+    mean_radius_inlet::Real,
+    inlet_area::Real,
+    Tt_in::Real,
+    Pt_in::Real,
+    omega_ref_for_phi::Real,
+)
+    gamma > 1 || error("gamma must be > 1")
+    gas_constant > 0 || error("gas_constant must be > 0")
+    tip_radius_inlet > 0 || error("tip_radius_inlet must be > 0")
+    mean_radius_inlet > 0 || error("mean_radius_inlet must be > 0")
+    inlet_area > 0 || error("inlet_area must be > 0")
+    Tt_in > 0 || error("Tt_in must be > 0")
+    Pt_in > 0 || error("Pt_in must be > 0")
+    omega_ref_for_phi > 0 || error("omega_ref_for_phi must be > 0")
+
+    omega = Float64.(omega_grid)
+    mdot = Float64.(mdot_grid)
+    length(omega) >= 2 || error("omega_grid must have at least 2 points")
+    length(mdot) >= 2 || error("mdot_grid must have at least 2 points")
+    issorted(omega) || error("omega_grid must be sorted ascending")
+    issorted(mdot) || error("mdot_grid must be sorted ascending")
+    all(omega .> 0) || error("omega_grid values must be strictly positive")
+
+    a0_in = sqrt(Float64(gamma) * Float64(gas_constant) * Float64(Tt_in))
+    rho0_in = Float64(Pt_in) / (Float64(gas_constant) * Float64(Tt_in))
+    denom = rho0_in * Float64(inlet_area) * Float64(omega_ref_for_phi) * Float64(mean_radius_inlet)
+
+    m_tip_grid = omega .* Float64(tip_radius_inlet) ./ a0_in
+    phi_in_grid = mdot ./ denom
+    return (m_tip_grid=m_tip_grid, phi_in_grid=phi_in_grid)
 end
 
 """
@@ -84,13 +183,13 @@ function to_nondimensional_tabulated_compressor_map(
         phi_lo = minimum(
             _phi_from_source_map_flow(
                 Float64(omega),
-                _interp_linear_1d_clamped_conversion(omega_grid_src, surge_grid_src, Float64(omega)),
+                linear_evaluate(omega_grid_src, surge_grid_src, Float64(omega)),
             ) for omega in omega_grid_src
         )
         phi_hi = maximum(
             _phi_from_source_map_flow(
                 Float64(omega),
-                _interp_linear_1d_clamped_conversion(omega_grid_src, choke_grid_src, Float64(omega)),
+                linear_evaluate(omega_grid_src, choke_grid_src, Float64(omega)),
             ) for omega in omega_grid_src
         )
         _linspace_inclusive(phi_lo, phi_hi, length(map_flow_grid_src))
@@ -116,8 +215,8 @@ function to_nondimensional_tabulated_compressor_map(
     phi_choke = Float64[]
     for m_tip in m_grid
         omega = omega_from_m(m_tip)
-        map_flow_surge = _interp_linear_1d_clamped_conversion(omega_grid_src, surge_grid_src, omega)
-        map_flow_choke = _interp_linear_1d_clamped_conversion(omega_grid_src, choke_grid_src, omega)
+        map_flow_surge = linear_evaluate(omega_grid_src, surge_grid_src, omega)
+        map_flow_choke = linear_evaluate(omega_grid_src, choke_grid_src, omega)
         push!(phi_surge, _phi_from_source_map_flow(omega, map_flow_surge))
         push!(phi_choke, _phi_from_source_map_flow(omega, map_flow_choke))
     end
@@ -211,8 +310,8 @@ function to_tabulated_compressor_map(
     mdot_corr_choke = Float64[]
     for omega in omega_grid
         m_tip = omega * map.tip_radius_inlet / a0_ref
-        phi_s = _interp_linear_1d_clamped_conversion(m_grid_src, map.phi_surge, m_tip)
-        phi_c = _interp_linear_1d_clamped_conversion(m_grid_src, map.phi_choke, m_tip)
+        phi_s = linear_evaluate(m_grid_src, map.phi_surge, m_tip)
+        phi_c = linear_evaluate(m_grid_src, map.phi_choke, m_tip)
         push!(mdot_corr_surge, _map_flow_from_source_phi(Float64(omega), phi_s))
         push!(mdot_corr_choke, _map_flow_from_source_phi(Float64(omega), phi_c))
     end

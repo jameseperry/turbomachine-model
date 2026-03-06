@@ -110,6 +110,15 @@
 
         src_omega_grid = collect(U.table_xgrid(src.pr_map))
         src_mdot_corr_grid = collect(U.table_ygrid(src.pr_map))
+        dim_grids = TM.corrected_grids_to_physical_grids(
+            src,
+            src_omega_grid,
+            src_mdot_corr_grid,
+            Tt_ref,
+            Pt_ref,
+        )
+        @test dim_grids.omega_grid == Float64.(src_omega_grid)
+        @test dim_grids.mdot_grid == Float64.(src_mdot_corr_grid)
         m_tip_grid = [
             omega * tip_radius_inlet / sqrt(gamma * gas_constant * Tt_ref) for omega in src_omega_grid
         ]
@@ -117,6 +126,20 @@
         phi_in_grid = [
             mdot / (rho0_ref * inlet_area * omega_ref_line * mean_radius_inlet) for mdot in src_mdot_corr_grid
         ]
+        nd_grids = TM.physical_grids_to_nondimensional_grids(
+            dim_grids.omega_grid,
+            dim_grids.mdot_grid;
+            gamma=gamma,
+            gas_constant=gas_constant,
+            tip_radius_inlet=tip_radius_inlet,
+            mean_radius_inlet=mean_radius_inlet,
+            inlet_area=inlet_area,
+            Tt_in=Tt_ref,
+            Pt_in=Pt_ref,
+            omega_ref_for_phi=omega_ref_line,
+        )
+        @test isapprox(nd_grids.m_tip_grid, m_tip_grid; rtol=0, atol=1e-12)
+        @test isapprox(nd_grids.phi_in_grid, phi_in_grid; rtol=0, atol=1e-12)
 
         nd = TM.to_nondimensional_tabulated_compressor_map(
             src;
@@ -452,13 +475,56 @@
         @test isapprox(meanline_vals_core.PR, meanline_vals.PR; rtol=1e-12)
         @test isapprox(meanline_vals_core.eta, meanline_vals.eta; rtol=1e-12)
 
-        nd_from_meanline = TM.tabulate_compressor_meanline_model(
+        nd_from_meanline = TM.tabulate_compressor_meanline_model_nd(
             meanline;
             n_speed=9,
             n_flow=11,
             interpolation=:bilinear,
         )
         @test nd_from_meanline isa TM.NonDimensionalTabulatedCompressorPerformanceMap
+        dim_from_meanline = TM.tabulate_compressor_meanline_model_dim(
+            meanline;
+            n_speed=9,
+            n_flow=11,
+            interpolation=:bilinear,
+            Tt_in_ref=300.0,
+            Pt_in_ref=101_325.0,
+            Tt_ref=300.0,
+            Pt_ref=101_325.0,
+        )
+        @test dim_from_meanline isa TM.TabulatedCompressorPerformanceMap
+        dim_grid_omega = collect(U.table_xgrid(dim_from_meanline.pr_map))
+        dim_grid_mdot_corr = collect(U.table_ygrid(dim_from_meanline.pr_map))
+        @test length(dim_grid_mdot_corr) == 11
+        @test length(dim_grid_omega) >= 2
+        dim_from_nd = TM.to_tabulated_compressor_map(
+            nd_from_meanline;
+            Tt_in_ref=300.0,
+            Pt_in_ref=101_325.0,
+            Tt_ref=300.0,
+            Pt_ref=101_325.0,
+            omega_corr_grid=dim_grid_omega,
+            mdot_corr_grid=dim_grid_mdot_corr,
+            interpolation=:bilinear,
+        )
+        i_mid = cld(length(dim_grid_omega), 2)
+        j_mid = cld(length(dim_grid_mdot_corr), 2)
+        vals_dim_direct = TM.performance_from_stagnation(
+            dim_from_meanline,
+            dim_grid_omega[i_mid],
+            dim_grid_mdot_corr[j_mid],
+            300.0,
+            101_325.0,
+        )
+        vals_dim_from_nd = TM.performance_from_stagnation(
+            dim_from_nd,
+            dim_grid_omega[i_mid],
+            dim_grid_mdot_corr[j_mid],
+            300.0,
+            101_325.0,
+        )
+        @test isapprox(vals_dim_direct.PR, vals_dim_from_nd.PR; rtol=1e-8)
+        @test isapprox(vals_dim_direct.eta, vals_dim_from_nd.eta; rtol=1e-8)
         m_grid = U.table_xgrid(nd_from_meanline.pr_map)
         phi_grid = U.table_ygrid(nd_from_meanline.pr_map)
         m_sample = m_grid[4]

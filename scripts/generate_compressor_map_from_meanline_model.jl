@@ -110,15 +110,14 @@ function _main(args::Vector{String}=ARGS)
         input_path;
         group=input_group,
     )
-    nd_map = Compressor.tabulate_compressor_meanline_model(
-        meanline_model;
-        n_speed=n_speed,
-        n_flow=n_flow,
-        interpolation=interpolation,
-        boundary_resolution=boundary_resolution,
-    )
-
     if output_format == :nondimensional
+        nd_map = Compressor.tabulate_compressor_meanline_model_nd(
+            meanline_model;
+            n_speed=n_speed,
+            n_flow=n_flow,
+            interpolation=interpolation,
+            boundary_resolution=boundary_resolution,
+        )
         Compressor.write_toml(nd_map, output_path; group=output_group)
         println(
             "Generated nondimensional compressor map from meanline model: input=$(input_path) group=$(input_group), output=$(output_path) group=$(output_group), interpolation=$(interpolation), n_speed=$(n_speed), n_flow=$(n_flow)",
@@ -128,13 +127,16 @@ function _main(args::Vector{String}=ARGS)
 
     Tt_ref = isnothing(Tt_ref_opt) ? Tt_in_ref : Tt_ref_opt
     Pt_ref = isnothing(Pt_ref_opt) ? Pt_in_ref : Pt_ref_opt
-    dim_map = Compressor.to_tabulated_compressor_map(
-        nd_map;
+    dim_map = Compressor.tabulate_compressor_meanline_model_dim(
+        meanline_model;
+        n_speed=n_speed,
+        n_flow=n_flow,
         Tt_in_ref=Tt_in_ref,
         Pt_in_ref=Pt_in_ref,
         Tt_ref=Tt_ref,
         Pt_ref=Pt_ref,
         interpolation=interpolation,
+        boundary_resolution=boundary_resolution,
     )
     Compressor.write_toml(dim_map, output_path; group=output_group)
     println(

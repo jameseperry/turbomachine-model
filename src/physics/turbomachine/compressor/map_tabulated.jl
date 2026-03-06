@@ -4,6 +4,7 @@ Tabulated compressor performance map implementation (dimensional/corrected-flow 
 
 using TOML
 using ....Utility: AbstractTableMap, interpolation_map, table_evaluate
+using ....Utility: linear_evaluate
 using ....Utility: table_xgrid, table_ygrid, table_values, table_interpolation
 import ....Utility: write_toml, read_toml
 
@@ -119,24 +120,6 @@ _pr_table(map::TabulatedCompressorPerformanceMap) = table_values(map.pr_map)
 _eta_table(map::TabulatedCompressorPerformanceMap) = table_values(map.eta_map)
 _interpolation_kind(map::TabulatedCompressorPerformanceMap) = table_interpolation(map.pr_map)
 
-function _interp_linear_1d_clamped_tabulated(
-    xgrid::AbstractVector{<:Real},
-    ygrid::AbstractVector{<:Real},
-    x::Real,
-)
-    x1 = first(xgrid)
-    x2 = last(xgrid)
-    xc = clamp(x, x1, x2)
-    i_hi = searchsortedfirst(xgrid, xc)
-    i_hi <= 1 && return ygrid[1]
-    i_hi > length(xgrid) && return ygrid[end]
-    i_lo = i_hi - 1
-    xl = xgrid[i_lo]
-    xr = xgrid[i_hi]
-    t = (xc - xl) / (xr - xl)
-    return (1 - t) * ygrid[i_lo] + t * ygrid[i_hi]
-end
-
 """Map-coordinate speed for tabulated corrected-flow maps (physical omega)."""
 _map_speed_coordinate_from_stagnation(
     map::TabulatedCompressorPerformanceMap,
@@ -174,8 +157,8 @@ function _compressor_performance_map(
 )
     PR = table_evaluate(map.pr_map, speed_coord, flow_coord)
     eta = table_evaluate(map.eta_map, speed_coord, flow_coord)
-    mdot_s = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_surge, speed_coord)
-    mdot_c = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_choke, speed_coord)
+    mdot_s = linear_evaluate(_omega_corr_grid(map), map.mdot_corr_surge, speed_coord)
+    mdot_c = linear_evaluate(_omega_corr_grid(map), map.mdot_corr_choke, speed_coord)
     return (
         PR=PR,
         eta=eta,
@@ -223,8 +206,8 @@ function performance_map_domain(
     speed_hi = last(_omega_corr_grid(map))
     mdot_vals = Float64[]
     for omega in _omega_corr_grid(map)
-        mdot_s = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_surge, omega)
-        mdot_c = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_choke, omega)
+        mdot_s = linear_evaluate(_omega_corr_grid(map), map.mdot_corr_surge, omega)
+        mdot_c = linear_evaluate(_omega_corr_grid(map), map.mdot_corr_choke, omega)
         push!(mdot_vals, _physical_mdot_from_map_flow_coordinate(map, omega, mdot_s, Tt_in, Pt_in))
         push!(mdot_vals, _physical_mdot_from_map_flow_coordinate(map, omega, mdot_c, Tt_in, Pt_in))
     end
@@ -233,11 +216,11 @@ function performance_map_domain(
         mdot=(minimum(mdot_vals), maximum(mdot_vals)),
         mdot_flow_range=(
             surge=(omega -> begin
-                mdot_s = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_surge, omega)
+                mdot_s = linear_evaluate(_omega_corr_grid(map), map.mdot_corr_surge, omega)
                 _physical_mdot_from_map_flow_coordinate(map, omega, mdot_s, Tt_in, Pt_in)
             end),
             choke=(omega -> begin
-                mdot_c = _interp_linear_1d_clamped_tabulated(_omega_corr_grid(map), map.mdot_corr_choke, omega)
+                mdot_c = linear_evaluate(_omega_corr_grid(map), map.mdot_corr_choke, omega)
                 _physical_mdot_from_map_flow_coordinate(map, omega, mdot_c, Tt_in, Pt_in)
             end),
         ),
