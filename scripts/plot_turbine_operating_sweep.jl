@@ -34,6 +34,13 @@ function _parse_branch(raw::AbstractString)
     return b
 end
 
+function _parse_mode(raw::AbstractString)
+    m = Symbol(lowercase(strip(raw)))
+    m in (:fixed_pt_out_grid, :torque_balance) ||
+        error("mode must be one of: fixed_pt_out_grid|torque_balance")
+    return m
+end
+
 _omega_corr_from_omega(map::TT.TabulatedTurbinePerformanceMap, omega::Float64, Tt_in::Float64) =
     TT.corrected_speed(omega, Tt_in, map)
 
@@ -318,6 +325,77 @@ function solve_turbine_operating_sweep(
     )
 end
 
+function solve_turbine_operating_grid_fixed_pt_out(
+    map::TT.TabulatedTurbinePerformanceMap,
+    eos::Fluids.AbstractEOS;
+    omega_min::Float64,
+    omega_max::Float64,
+    n_omega::Int,
+    pt_in_min::Float64,
+    pt_in_max::Float64,
+    n_pt_in::Int,
+    pt_out::Float64,
+    Tt_in::Float64,
+)
+    n_omega >= 2 || error("n_omega must be >= 2")
+    n_pt_in >= 2 || error("n_pt_in must be >= 2")
+    pt_out > 0 || error("pt_out must be > 0")
+    pt_in_max > pt_in_min > 0 || error("pt_in_min/pt_in_max must satisfy 0 < pt_in_min < pt_in_max")
+
+    ht_in = Fluids.enthalpy_from_temperature(eos, Tt_in)
+    omegas = collect(range(omega_min, omega_max, length=n_omega))
+    pt_ins = collect(range(pt_in_min, pt_in_max, length=n_pt_in))
+
+    prs = fill(NaN, n_pt_in, n_omega)
+    etas = fill(NaN, n_pt_in, n_omega)
+    mdots = fill(NaN, n_pt_in, n_omega)
+    powers = fill(NaN, n_pt_in, n_omega)
+    converged = fill(false, n_pt_in, n_omega)
+    failure_reason = fill("none", n_pt_in, n_omega)
+    pr_turb_min = fill(NaN, n_pt_in, n_omega)
+    pr_turb_max = fill(NaN, n_pt_in, n_omega)
+
+    for (j, omega) in enumerate(omegas)
+        pr_lo, pr_hi = _turbine_pr_bounds(map, omega, Tt_in)
+        for (i, pt_in) in enumerate(pt_ins)
+            pr_target = pt_in / pt_out
+            pr_turb_min[i, j] = pr_lo
+            pr_turb_max[i, j] = pr_hi
+            if !(pr_lo <= pr_target <= pr_hi)
+                failure_reason[i, j] = "pr_out_of_domain"
+                continue
+            end
+
+            state = _state_from_pt_out(map, eos, pt_in, ht_in, omega, pt_out, Tt_in)
+            if !state.valid || !isfinite(state.eta) || !isfinite(state.mdot) || !isfinite(state.shaft_power)
+                failure_reason[i, j] = "map_invalid"
+                continue
+            end
+
+            prs[i, j] = state.PR_turb
+            etas[i, j] = state.eta
+            mdots[i, j] = state.mdot
+            powers[i, j] = -state.shaft_power
+            converged[i, j] = true
+        end
+    end
+
+    return (
+        mode=:fixed_pt_out_grid,
+        omegas=omegas,
+        pt_ins=pt_ins,
+        pt_out=pt_out,
+        prs=prs,
+        etas=etas,
+        mdots=mdots,
+        powers=powers,
+        converged=converged,
+        failure_reason=failure_reason,
+        pr_turb_min=pr_turb_min,
+        pr_turb_max=pr_turb_max,
+    )
+end
+
 _diagnostics(data) = hasproperty(data, :diagnostics) ? data.diagnostics : NamedTuple[]
 
 function _plot_turbine_operating_sweep_data(
@@ -326,6 +404,70 @@ function _plot_turbine_operating_sweep_data(
     branch_match_cost::Float64=0.5,
 )
     branch_match_cost >= 0 || error("branch_match_cost must be >= 0")
+
+    if data.mode == :fixed_pt_out_grid
+        omega_axis = data.omegas
+        pt_in_axis = data.pt_ins
+        p1 = contourf(
+            omega_axis,
+            pt_in_axis,
+            data.prs;
+            xlabel="shaft speed omega",
+            ylabel="inlet total pressure pt_in (Pa)",
+            title="Expansion Ratio Pt_in/Pt_out",
+            fill=true,
+            colorbar_title="PR_turb",
+        )
+        p2 = contourf(
+            omega_axis,
+            pt_in_axis,
+            data.mdots;
+            xlabel="shaft speed omega",
+            ylabel="inlet total pressure pt_in (Pa)",
+            title="Mass Flow Rate mdot (kg/s)",
+            fill=true,
+            colorbar_title="kg/s",
+        )
+        p3 = contourf(
+            omega_axis,
+            pt_in_axis,
+            data.powers ./ 1_000.0;
+            xlabel="shaft speed omega",
+            ylabel="inlet total pressure pt_in (Pa)",
+            title="Power Output (kW)",
+            fill=true,
+            colorbar_title="kW",
+        )
+        p4 = contourf(
+            omega_axis,
+            pt_in_axis,
+            data.etas;
+            xlabel="shaft speed omega",
+            ylabel="inlet total pressure pt_in (Pa)",
+            title="Adiabatic Efficiency eta (-)",
+            fill=true,
+            colorbar_title="eta",
+        )
+
+        fig = plot(
+            p1,
+            p2,
+            p3,
+            p4;
+            layout=(2, 2),
+            size=(1200, 900),
+            left_margin=8Plots.mm,
+            right_margin=8Plots.mm,
+            top_margin=8Plots.mm,
+            bottom_margin=8Plots.mm,
+        )
+        savefig(fig, output_path)
+        n_total = length(data.omegas) * length(data.pt_ins)
+        n_conv = count(data.converged)
+        println("Converged points: $(n_conv) / $(n_total)")
+        println("Saved operating-point sweep plot to: $output_path")
+        return
+    end
 
     if data.mode == :single
         omega_axis = data.omegas
@@ -498,6 +640,26 @@ function write_turbine_operating_sweep_csv(
     data;
     output_path::AbstractString="turbine_operating_sweep.csv",
 )
+    if data.mode == :fixed_pt_out_grid
+        open(output_path, "w") do io
+            println(
+                io,
+                "omega,pt_in,pt_out,PR_turb,eta,mdot,power_out_kw,converged,failure_reason,pr_turb_min,pr_turb_max",
+            )
+            for (j, omega) in enumerate(data.omegas), (i, pt_in) in enumerate(data.pt_ins)
+                println(
+                    io,
+                    "$(omega),$(pt_in),$(data.pt_out),$(data.prs[i,j]),$(data.etas[i,j]),$(data.mdots[i,j]),$(data.powers[i,j] / 1_000.0),$(data.converged[i,j]),$(data.failure_reason[i,j]),$(data.pr_turb_min[i,j]),$(data.pr_turb_max[i,j])",
+                )
+            end
+        end
+        n_total = length(data.omegas) * length(data.pt_ins)
+        n_converged = count(data.converged)
+        println("Converged rows: $n_converged / $n_total")
+        println("Saved operating-point sweep CSV to: $output_path")
+        return
+    end
+
     diag_by_omega = Dict{Float64,NamedTuple}()
     for d in _diagnostics(data)
         diag_by_omega[Float64(d.omega)] = d
@@ -560,6 +722,30 @@ function write_turbine_operating_sweep_csv(
 end
 
 function print_turbine_operating_sweep_failures(data)
+    if data.mode == :fixed_pt_out_grid
+        idxs = findall(.!data.converged)
+        isempty(idxs) && return
+        println("Failed points diagnostics:")
+        reason_counts = Dict{String,Int}()
+        for idx in idxs
+            i, j = idx.I
+            reason = String(data.failure_reason[i, j])
+            reason_counts[reason] = get(reason_counts, reason, 0) + 1
+        end
+        for (reason, count) in sort(collect(reason_counts); by=kv -> kv[1])
+            println("  reason=$(reason), count=$(count)")
+        end
+        n_show = min(length(idxs), 20)
+        println("  showing first $(n_show) failed points:")
+        for idx in idxs[1:n_show]
+            i, j = idx.I
+            println(
+                "    omega=$(data.omegas[j]), pt_in=$(data.pt_ins[i]), reason=$(data.failure_reason[i,j]), PR_turb_range=[$(data.pr_turb_min[i,j]), $(data.pr_turb_max[i,j])]",
+            )
+        end
+        return
+    end
+
     failures = filter(d -> !d.converged, _diagnostics(data))
     isempty(failures) && return
     println("Failed points diagnostics:")
@@ -593,6 +779,10 @@ function _main(args::Vector{String}=ARGS)
         "--tau-load"
             help = "load torque (N*m), typically negative for power extraction; default is estimated from map/inlet state"
             arg_type = Float64
+        "--mode"
+            help = "sweep mode: fixed_pt_out_grid (2D omega x pt_in, fixed pt_out) or torque_balance (legacy 1D omega root solve)"
+            arg_type = String
+            default = "fixed_pt_out_grid"
         "--omega-min"
             help = "minimum shaft speed omega (rad/s); default comes from map domain"
             arg_type = Float64
@@ -604,7 +794,20 @@ function _main(args::Vector{String}=ARGS)
             arg_type = Int
             default = 25
         "--pt-in"
-            help = "inlet total pressure (Pa)"
+            help = "inlet total pressure (Pa) for torque_balance mode"
+            arg_type = Float64
+            default = 101_325.0
+        "--pt-in-min"
+            help = "minimum inlet total pressure (Pa) for fixed_pt_out_grid mode; default inferred from map PR domain and pt_out"
+            arg_type = Float64
+        "--pt-in-max"
+            help = "maximum inlet total pressure (Pa) for fixed_pt_out_grid mode; default inferred from map PR domain and pt_out"
+            arg_type = Float64
+        "--n-pt-in"
+            help = "number of pt_in points for fixed_pt_out_grid mode (defaults to n-points)"
+            arg_type = Int
+        "--pt-out"
+            help = "fixed outlet total pressure (Pa) for fixed_pt_out_grid mode"
             arg_type = Float64
             default = 101_325.0
         "--tt-in"
@@ -628,6 +831,7 @@ function _main(args::Vector{String}=ARGS)
     parsed = parse_args(args, settings)
     map_group = something(_parsed_opt(parsed, "map_group", "map-group"), "turbine_map")
     csv_output = _parsed_opt(parsed, "csv", "csv")
+    mode = _parse_mode(something(_parsed_opt(parsed, "mode", "mode"), "fixed_pt_out_grid"))
     branch = _parse_branch(something(_parsed_opt(parsed, "branch", "branch"), "high"))
     output = something(_parsed_opt(parsed, "output", "output"), "turbine_operating_sweep.png")
     tau_load_arg = _parsed_opt(parsed, "tau_load", "tau-load")
@@ -635,6 +839,10 @@ function _main(args::Vector{String}=ARGS)
     omega_max_arg = _parsed_opt(parsed, "omega_max", "omega-max")
     n_points = Int(something(_parsed_opt(parsed, "n_points", "n-points"), 25))
     pt_in = Float64(something(_parsed_opt(parsed, "pt_in", "pt-in"), 101_325.0))
+    pt_in_min_arg = _parsed_opt(parsed, "pt_in_min", "pt-in-min")
+    pt_in_max_arg = _parsed_opt(parsed, "pt_in_max", "pt-in-max")
+    n_pt_in_arg = _parsed_opt(parsed, "n_pt_in", "n-pt-in")
+    pt_out = Float64(something(_parsed_opt(parsed, "pt_out", "pt-out"), 101_325.0))
     tt_in = Float64(something(_parsed_opt(parsed, "tt_in", "tt-in"), 288.15))
     root_scan = Int(something(_parsed_opt(parsed, "root_scan", "root-scan"), 401))
     branch_match_cost = Float64(something(_parsed_opt(parsed, "branch_match_cost", "branch-match-cost"), 0.5))
@@ -646,25 +854,55 @@ function _main(args::Vector{String}=ARGS)
     omega_default_max = _omega_from_omega_corr(map, ωcorr_max, tt_in)
     omega_min = Float64(something(omega_min_arg, omega_default_min))
     omega_max = Float64(something(omega_max_arg, omega_default_max))
-    tau_load = if isnothing(tau_load_arg)
-        _default_tau_load(map, Fluids.ideal_EOS()[:air]; pt_in=pt_in, Tt_in=tt_in)
+    data = if mode == :torque_balance
+        tau_load = if isnothing(tau_load_arg)
+            _default_tau_load(map, Fluids.ideal_EOS()[:air]; pt_in=pt_in, Tt_in=tt_in)
+        else
+            Float64(tau_load_arg)
+        end
+        println("Using torque_balance mode with omega range [$(omega_min), $(omega_max)] rad/s and tau_load=$(tau_load) N*m")
+        solve_turbine_operating_sweep(
+            map,
+            Fluids.ideal_EOS()[:air];
+            omega_min=omega_min,
+            omega_max=omega_max,
+            n_points=n_points,
+            tau_load=tau_load,
+            pt_in=pt_in,
+            Tt_in=tt_in,
+            branch=branch,
+            root_scan=root_scan,
+        )
     else
-        Float64(tau_load_arg)
+        n_pt_in = Int(something(n_pt_in_arg, n_points))
+        n_pt_in >= 2 || error("n-pt-in must be >= 2")
+        ω_axis = collect(range(omega_min, omega_max, length=max(n_points, 2)))
+        pr_lo = Inf
+        pr_hi = -Inf
+        for ω in ω_axis
+            lo, hi = _turbine_pr_bounds(map, ω, tt_in)
+            pr_lo = min(pr_lo, lo)
+            pr_hi = max(pr_hi, hi)
+        end
+        isfinite(pr_lo) && isfinite(pr_hi) || error("unable to infer PR bounds for fixed_pt_out_grid mode")
+        pt_in_min = Float64(something(pt_in_min_arg, pt_out * pr_lo))
+        pt_in_max = Float64(something(pt_in_max_arg, pt_out * pr_hi))
+        println(
+            "Using fixed_pt_out_grid mode with omega range [$(omega_min), $(omega_max)] rad/s, pt_in range [$(pt_in_min), $(pt_in_max)] Pa, pt_out=$(pt_out) Pa",
+        )
+        solve_turbine_operating_grid_fixed_pt_out(
+            map,
+            Fluids.ideal_EOS()[:air];
+            omega_min=omega_min,
+            omega_max=omega_max,
+            n_omega=n_points,
+            pt_in_min=pt_in_min,
+            pt_in_max=pt_in_max,
+            n_pt_in=n_pt_in,
+            pt_out=pt_out,
+            Tt_in=tt_in,
+        )
     end
-    println("Using omega sweep range [$(omega_min), $(omega_max)] rad/s and tau_load=$(tau_load) N*m")
-
-    data = solve_turbine_operating_sweep(
-        map,
-        Fluids.ideal_EOS()[:air];
-        omega_min=omega_min,
-        omega_max=omega_max,
-        n_points=n_points,
-        tau_load=tau_load,
-        pt_in=pt_in,
-        Tt_in=tt_in,
-        branch=branch,
-        root_scan=root_scan,
-    )
 
     _plot_turbine_operating_sweep_data(
         data;

@@ -18,6 +18,20 @@ function _parse_branch(raw::AbstractString)
     return key
 end
 
+function _parse_pr_grid_mode(raw::AbstractString)
+    key = Symbol(lowercase(strip(raw)))
+    key in (:union, :overlap) ||
+        error("unsupported pr-grid-mode=$(raw) (expected union|overlap)")
+    return key
+end
+
+function _parse_sampling_strategy(raw::AbstractString)
+    key = Symbol(lowercase(strip(raw)))
+    key in (:roots, :scan) ||
+        error("unsupported sampling-strategy=$(raw) (expected roots|scan)")
+    return key
+end
+
 function _parsed_opt(parsed::Dict{String,Any}, primary::String, fallback::String)
     if haskey(parsed, primary)
         return parsed[primary]
@@ -66,6 +80,22 @@ function _build_parser()
             help = "phi probe count per speed line for feasible PR range detection/root bracketing"
             arg_type = Int
             default = 401
+        "--pr-grid-mode"
+            help = "PR grid construction mode: union or overlap"
+            arg_type = String
+            default = "union"
+        "--sampling-strategy"
+            help = "tabulation sampling strategy: roots or scan"
+            arg_type = String
+            default = "roots"
+        "--pr-merge-rtol"
+            help = "relative tolerance for collapsing multi-valued PR scan points per speed line"
+            arg_type = Float64
+            default = 1e-4
+        "--smooth-window"
+            help = "odd moving-average window along PR axis (0/1 disables smoothing)"
+            arg_type = Int
+            default = 0
         "--Tt-in-ref"
             help = "reference inlet total temperature [K]"
             arg_type = Float64
@@ -96,6 +126,10 @@ function _main(args::Vector{String}=ARGS)
     n_speed = parsed["n-speed"]
     n_pr = parsed["n-pr"]
     boundary_resolution = parsed["boundary-resolution"]
+    pr_grid_mode = _parse_pr_grid_mode(parsed["pr-grid-mode"])
+    sampling_strategy = _parse_sampling_strategy(parsed["sampling-strategy"])
+    pr_merge_rtol = parsed["pr-merge-rtol"]
+    smooth_window = parsed["smooth-window"]
     Tt_in_ref = parsed["Tt-in-ref"]
     Pt_in_ref = parsed["Pt-in-ref"]
     Tt_ref_opt = _parsed_opt(parsed, "Tt_ref", "Tt-ref")
@@ -119,10 +153,14 @@ function _main(args::Vector{String}=ARGS)
         Tt_ref=Tt_ref,
         Pt_ref=Pt_ref,
         branch=branch,
+        pr_grid_mode=pr_grid_mode,
+        sampling_strategy=sampling_strategy,
+        pr_merge_rtol=pr_merge_rtol,
+        smooth_window=smooth_window,
     )
     Turbine.write_toml(map, output_path; group=output_group)
     println(
-        "Generated turbine map from meanline model: input=$(input_path) group=$(input_group), output=$(output_path) group=$(output_group), interpolation=$(interpolation), branch=$(branch), n_speed=$(n_speed), n_pr=$(n_pr), Tt_ref=$(Tt_ref), Pt_ref=$(Pt_ref)",
+        "Generated turbine map from meanline model: input=$(input_path) group=$(input_group), output=$(output_path) group=$(output_group), interpolation=$(interpolation), branch=$(branch), pr_grid_mode=$(pr_grid_mode), sampling_strategy=$(sampling_strategy), pr_merge_rtol=$(pr_merge_rtol), smooth_window=$(smooth_window), n_speed=$(n_speed), n_pr=$(n_pr), Tt_ref=$(Tt_ref), Pt_ref=$(Pt_ref)",
     )
 end
 

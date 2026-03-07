@@ -107,6 +107,54 @@ function _sorted_pr_samples(samples::Vector{NamedTuple})
     return (pr=pr, mdot=mdot, eta=eta)
 end
 
+function _branch_pr_samples(
+    samples::Vector{NamedTuple},
+    branch::Symbol;
+    merge_rtol::Float64=1e-4,
+)
+    isempty(samples) && return (pr=Float64[], mdot=Float64[], eta=Float64[])
+    branch in (:low, :high) || error("branch must be one of: low|high")
+    merge_rtol >= 0 || error("merge_rtol must be >= 0")
+
+    sorted = sort(samples; by=s -> s.PR_turb)
+    pr = Float64[]
+    mdot = Float64[]
+    eta = Float64[]
+
+    i = 1
+    n = length(sorted)
+    while i <= n
+        pr_i = Float64(sorted[i].PR_turb)
+        tol = merge_rtol * max(abs(pr_i), 1.0)
+        j = i
+        candidate_idx = i
+        candidate_phi = Float64(sorted[i].phi)
+        while j <= n && abs(Float64(sorted[j].PR_turb) - pr_i) <= tol
+            phi_j = Float64(sorted[j].phi)
+            if branch == :high
+                if phi_j > candidate_phi
+                    candidate_phi = phi_j
+                    candidate_idx = j
+                end
+            else
+                if phi_j < candidate_phi
+                    candidate_phi = phi_j
+                    candidate_idx = j
+                end
+            end
+            j += 1
+        end
+
+        s = sorted[candidate_idx]
+        push!(pr, Float64(s.PR_turb))
+        push!(mdot, Float64(s.mdot_corr))
+        push!(eta, Float64(s.eta))
+        i = j
+    end
+
+    return (pr=pr, mdot=mdot, eta=eta)
+end
+
 function _interp_pr_sample(
     pr_axis::Vector{Float64},
     mdot_axis::Vector{Float64},
@@ -136,6 +184,20 @@ function _interp_pr_sample(
     return (mdot_corr=mdot_val, eta=eta_val)
 end
 
+function _smooth_axis(values::Vector{Float64}, window::Int)
+    window <= 1 && return copy(values)
+    n = length(values)
+    n <= 2 && return copy(values)
+    half = window ÷ 2
+    out = similar(values)
+    for i in 1:n
+        lo = max(1, i - half)
+        hi = min(n, i + half)
+        out[i] = sum(@view values[lo:hi]) / (hi - lo + 1)
+    end
+    return out
+end
+
 """
 Tabulate an axial-machine model into a dimensional tabulated turbine map.
 
@@ -155,11 +217,20 @@ function tabulate_turbine_meanline_model(
     interpolation::Symbol=:bilinear,
     boundary_resolution::Int=401,
     branch::Symbol=:high,
+    pr_grid_mode::Symbol=:union,
+    sampling_strategy::Symbol=:roots,
+    pr_merge_rtol::Real=1e-4,
+    smooth_window::Int=0,
 )
     boundary_resolution >= 21 || error("boundary_resolution must be >= 21")
     interpolation in (:bilinear, :bicubic) ||
         error("interpolation must be :bilinear or :bicubic")
     branch in (:low, :high) || error("branch must be one of: low|high")
+    pr_grid_mode in (:union, :overlap) || error("pr_grid_mode must be one of: union|overlap")
+    sampling_strategy in (:roots, :scan) || error("sampling_strategy must be one of: roots|scan")
+    pr_merge_rtol >= 0 || error("pr_merge_rtol must be >= 0")
+    smooth_window >= 0 || error("smooth_window must be >= 0")
+    smooth_window <= 1 || isodd(smooth_window) || error("smooth_window must be odd when > 1")
     Tt_in_ref > 0 || error("Tt_in_ref must be > 0")
     Pt_in_ref > 0 || error("Pt_in_ref must be > 0")
     Tt_ref > 0 || error("Tt_ref must be > 0")
@@ -224,9 +295,12 @@ function tabulate_turbine_meanline_model(
         error("meanline model has fewer than two valid turbine-like speed lines in requested tabulation range")
 
     pr_grid = if isnothing(grids.pr_turb_grid)
-        pr_lo = minimum(pr_min)
-        pr_hi = maximum(pr_max)
-        pr_hi > pr_lo || error("invalid turbine PR_turb bounds derived from meanline model")
+        pr_lo, pr_hi = if pr_grid_mode == :union
+            (minimum(pr_min), maximum(pr_max))
+        else
+            (maximum(pr_min), minimum(pr_max))
+        end
+        pr_hi > pr_lo || error("invalid turbine PR_turb bounds derived from meanline model for pr_grid_mode=$(pr_grid_mode)")
         collect(range(pr_lo, pr_hi, length=n_pr))
     else
         grids.pr_turb_grid
@@ -238,66 +312,92 @@ function tabulate_turbine_meanline_model(
     for (i, speed_data) in pairs(speed_samples)
         m_tip_i = speed_data.m_tip
         samples_i = speed_data.samples
-        smooth_axis = _sorted_pr_samples(samples_i)
+        branch_axis = _branch_pr_samples(
+            samples_i,
+            branch;
+            merge_rtol=Float64(pr_merge_rtol),
+        )
+        if length(branch_axis.pr) < 2
+            branch_axis = _sorted_pr_samples(samples_i)
+        end
         prior_phi = Float64[]
+        mdot_row = Vector{Float64}(undef, length(pr_grid))
+        eta_row = Vector{Float64}(undef, length(pr_grid))
         for (j, pr_target) in pairs(pr_grid)
-            residual = function (phi)
-                st = _turbine_state_from_phi(
-                    model,
-                    m_tip_i,
-                    phi,
-                    rho0_in_ref,
-                    inlet_area,
-                    mean_radius_inlet,
-                    a0_in_ref,
-                    Float64(Tt_in_ref),
-                    Float64(Pt_in_ref),
-                    Float64(Tt_ref),
-                    Float64(Pt_ref),
+            sample = if sampling_strategy == :roots
+                residual = function (phi)
+                    st = _turbine_state_from_phi(
+                        model,
+                        m_tip_i,
+                        phi,
+                        rho0_in_ref,
+                        inlet_area,
+                        mean_radius_inlet,
+                        a0_in_ref,
+                        Float64(Tt_in_ref),
+                        Float64(Pt_in_ref),
+                        Float64(Tt_ref),
+                        Float64(Pt_ref),
+                    )
+                    st.valid || return NaN
+                    return st.PR_turb - pr_target
+                end
+                roots = bracket_bisect_roots(
+                    residual,
+                    (phi_lo, phi_hi);
+                    n_scan=boundary_resolution,
+                    root_tol=1e-8,
+                    prior_roots=prior_phi,
                 )
-                st.valid || return NaN
-                return st.PR_turb - pr_target
-            end
-            roots = bracket_bisect_roots(
-                residual,
-                (phi_lo, phi_hi);
-                n_scan=boundary_resolution,
-                root_tol=1e-8,
-                prior_roots=prior_phi,
-            )
 
-            sample = if !isempty(roots)
-                phi_sel = branch == :high ? last(roots) : first(roots)
-                st = _turbine_state_from_phi(
-                    model,
-                    m_tip_i,
-                    phi_sel,
-                    rho0_in_ref,
-                    inlet_area,
-                    mean_radius_inlet,
-                    a0_in_ref,
-                    Float64(Tt_in_ref),
-                    Float64(Pt_in_ref),
-                    Float64(Tt_ref),
-                    Float64(Pt_ref),
-                )
-                st.valid || error("root-selected turbine sample invalid at speed=$(speed_data.omega_corr), PR_turb=$(pr_target)")
-                prior_phi = [phi_sel]
-                (mdot_corr=st.mdot_corr, eta=st.eta)
+                if !isempty(roots)
+                    phi_sel = branch == :high ? last(roots) : first(roots)
+                    st = _turbine_state_from_phi(
+                        model,
+                        m_tip_i,
+                        phi_sel,
+                        rho0_in_ref,
+                        inlet_area,
+                        mean_radius_inlet,
+                        a0_in_ref,
+                        Float64(Tt_in_ref),
+                        Float64(Pt_in_ref),
+                        Float64(Tt_ref),
+                        Float64(Pt_ref),
+                    )
+                    st.valid || error("root-selected turbine sample invalid at speed=$(speed_data.omega_corr), PR_turb=$(pr_target)")
+                    prior_phi = [phi_sel]
+                    (mdot_corr=st.mdot_corr, eta=st.eta)
+                else
+                    # Fallback when root bracketing misses/disconnects: use smooth
+                    # 1D interpolation on scanned PR->(mdot_corr, eta) for this speed line.
+                    _interp_pr_sample(
+                        branch_axis.pr,
+                        branch_axis.mdot,
+                        branch_axis.eta,
+                        Float64(pr_target),
+                    )
+                end
             else
-                # Fallback when root bracketing misses/disconnects: use smooth
-                # 1D interpolation on scanned PR->(mdot_corr, eta) for this speed line.
+                # Scan strategy: tabulate directly from branch-selected scan samples.
                 _interp_pr_sample(
-                    smooth_axis.pr,
-                    smooth_axis.mdot,
-                    smooth_axis.eta,
+                    branch_axis.pr,
+                    branch_axis.mdot,
+                    branch_axis.eta,
                     Float64(pr_target),
                 )
             end
 
-            mdot_corr_table[i, j] = sample.mdot_corr
-            eta_table[i, j] = sample.eta
+            mdot_row[j] = sample.mdot_corr
+            eta_row[j] = sample.eta
         end
+
+        if smooth_window > 1
+            mdot_row = _smooth_axis(mdot_row, smooth_window)
+            eta_row = _smooth_axis(eta_row, smooth_window)
+        end
+        mdot_corr_table[i, :] = mdot_row
+        eta_table[i, :] = eta_row
     end
 
     return TabulatedTurbinePerformanceMap(
