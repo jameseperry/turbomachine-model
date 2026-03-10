@@ -1,5 +1,38 @@
 using ....Utility: bracket_bisect_roots
 
+function _station_radius(model::AxialMachineModel, streamtube_radii::AbstractVector{<:Real}, station_index::Int)
+    n_rows = length(model.rows)
+    1 <= station_index <= (n_rows + 1) || error("station_index out of bounds")
+    if station_index == 1
+        return Float64(streamtube_radii[1])
+    elseif station_index == n_rows + 1
+        return Float64(streamtube_radii[end])
+    end
+    return 0.5 * (Float64(streamtube_radii[station_index - 1]) + Float64(streamtube_radii[station_index]))
+end
+
+function _build_station_data(
+    model::AxialMachineModel,
+    streamtube_radii::AbstractVector{<:Real},
+    tau::Vector{Float64},
+    pi::Vector{Float64},
+    nu_theta::Vector{Float64},
+    nu_x::Vector{Float64},
+)
+    n_stations = length(tau)
+    return [
+        (
+            station_index=k,
+            radius=_station_radius(model, streamtube_radii, k),
+            area=station_area(model, k),
+            tau=tau[k],
+            pi=pi[k],
+            nu_theta=nu_theta[k],
+            nu_x=nu_x[k],
+        ) for k in 1:n_stations
+    ]
+end
+
 function _invalid_streamtube_result(n_rows::Int; stall::Bool, choke::Bool, mu::Float64=NaN)
     n_stations = n_rows + 1
     return (
@@ -16,6 +49,8 @@ function _invalid_streamtube_result(n_rows::Int; stall::Bool, choke::Bool, mu::F
         stall_row=falses(n_rows),
         choke_row=falses(n_rows),
         valid_row=trues(n_rows),
+        station_data=NamedTuple[],
+        row_data=NamedTuple[],
     )
 end
 
@@ -149,11 +184,62 @@ function _advance_row!(
     # nu_u is the blade-relative tangential velocity non-dimensionalized by the reference tip speed.
     # For stators, speed_ratio_to_ref = 0, so nu_u = 0 and the blade-relative flow angle is the same as the absolute flow angle.
     nu_u = row.speed_ratio_to_ref * m_tip * row_radius / model.r_tip_ref
+    area_in = station_area(model, station_in)
+    area_out = station_area(model, station_out)
+    nu_x_in = nu_x[station_in]
+    nu_theta_in = nu_theta[station_in]
+    tau_in = tau[station_in]
+    pi_in = pi[station_in]
     
-    # Compute blade aerodynamics given flow velocity components and blade speed.
-    aero_out = blade_aero(aero, nu_x[station_in], nu_theta[station_in], nu_u)
+    # Compute blade aerodynamics from the incoming relative flow and the row's
+    # metal inlet/exit angles. Incidence is measured against `theta_metal_in`
+    # and deviation is measured from `theta_metal_out`.
+    aero_out = blade_aero(
+        aero,
+        row.theta_metal_in,
+        row.theta_metal_out,
+        nu_x_in,
+        nu_theta_in,
+        nu_u,
+    )
     stall = (aero_out.stall_margin <= 0) || !aero_out.valid
-    aero_out.valid || return (converged=false, choke=false, stall=stall)
+    diagnostics_base = (
+        row_index=station_in,
+        station_in=station_in,
+        station_out=station_out,
+        r_hub=row.r_hub,
+        r_tip=row.r_tip,
+        row_radius=row_radius,
+        row_annulus_area=row_annulus_area(row),
+        area_in=area_in,
+        area_out=area_out,
+        theta_metal_in=row.theta_metal_in,
+        theta_metal_out=row.theta_metal_out,
+        speed_ratio_to_ref=row.speed_ratio_to_ref,
+        nu_u=nu_u,
+        nu_x_in=nu_x_in,
+        nu_x_out=NaN,
+        nu_theta_in=nu_theta_in,
+        nu_theta_out=NaN,
+        delta_nu_theta=NaN,
+        tau_in=tau_in,
+        tau_out=NaN,
+        delta_tau=NaN,
+        pi_in=pi_in,
+        pi_out=NaN,
+        delta_pi=NaN,
+        k_theta_exit=Float64(aero_out.k_theta_exit),
+        delta_s_hat=Float64(aero_out.delta_s_hat),
+        stall_margin=Float64(aero_out.stall_margin),
+        incidence=Float64(aero_out.diagnostics.incidence),
+        deviation=Float64(aero_out.diagnostics.deviation),
+        theta_in=Float64(aero_out.diagnostics.theta_in),
+        theta_out=Float64(aero_out.diagnostics.theta_out),
+        valid=Bool(aero_out.valid),
+        stall=stall,
+        choke=false,
+    )
+    aero_out.valid || return (converged=false, choke=false, stall=stall, diagnostics=diagnostics_base)
 
     # Compute nu_x at the row exit from blade aerodynamics and mass flow constraint.
     nu_x_solve = _solve_row_nu_x(
@@ -169,24 +255,41 @@ function _advance_row!(
         Float64(aero_out.delta_s_hat),
         prefer_root,
     )
-    nu_x_solve.converged || return (converged=false, choke=nu_x_solve.choke, stall=stall)
+    nu_x_solve.converged || return (
+        converged=false,
+        choke=nu_x_solve.choke,
+        stall=stall,
+        diagnostics=merge(diagnostics_base, (choke=nu_x_solve.choke,)),
+    )
     nu_x_out = nu_x_solve.nu_x
 
     # Calculate incrase in enthalpy
     gamma_ratio = model.gamma / (model.gamma - 1)
     nu_theta_out = nu_u + nu_x_out * aero_out.k_theta_exit
-    tau_out = tau[station_in] + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta[station_in])
-    tau_out > 0 || return (converged=false, choke=false, stall=stall)
+    tau_out = tau_in + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta_in)
+    tau_out > 0 || return (converged=false, choke=false, stall=stall, diagnostics=diagnostics_base)
 
     # Calculate increase in pressure ratio
-    pi_out = (tau_out / tau[station_in])^gamma_ratio *
-             pi[station_in] * exp(-gamma_ratio * aero_out.delta_s_hat)
+    pi_out = (tau_out / tau_in)^gamma_ratio *
+             pi_in * exp(-gamma_ratio * aero_out.delta_s_hat)
 
     nu_theta[station_out] = nu_theta_out
     tau[station_out] = tau_out
     pi[station_out] = pi_out
     nu_x[station_out] = nu_x_out
-    return (converged=true, choke=false, stall=stall)
+    diagnostics = merge(
+        diagnostics_base,
+        (
+            nu_x_out=nu_x_out,
+            nu_theta_out=nu_theta_out,
+            delta_nu_theta=nu_theta_out - nu_theta_in,
+            tau_out=tau_out,
+            delta_tau=tau_out - tau_in,
+            pi_out=pi_out,
+            delta_pi=pi_out - pi_in,
+        ),
+    )
+    return (converged=true, choke=false, stall=stall, diagnostics=diagnostics)
 end
 
 """
@@ -245,6 +348,7 @@ function streamtube_solve(
     stall_row = falses(n_rows)
     choke_row = falses(n_rows)
     valid_row = trues(n_rows)
+    row_data = Vector{NamedTuple}(undef, n_rows)
 
     tau[1] = 1.0
     pi[1] = 1.0
@@ -290,12 +394,61 @@ function streamtube_solve(
             prefer_root,
         )
         stall_row[k] = row_step.stall
+        row_data[k] = row_step.diagnostics
         if !row_step.converged
             choke_row[k] = row_step.choke
             valid_row[k] = false
             break
         end
     end
+
+    for k in 1:n_rows
+        if !isassigned(row_data, k)
+            row = model.rows[k]
+            station_in = k
+            station_out = k + 1
+            area_in = station_area(model, station_in)
+            area_out = station_area(model, station_out)
+            row_data[k] = (
+                row_index=k,
+                station_in=station_in,
+                station_out=station_out,
+                r_hub=row.r_hub,
+                r_tip=row.r_tip,
+                row_radius=radii[k],
+                row_annulus_area=row_annulus_area(row),
+                area_in=area_in,
+                area_out=area_out,
+                theta_metal_in=row.theta_metal_in,
+                theta_metal_out=row.theta_metal_out,
+                speed_ratio_to_ref=row.speed_ratio_to_ref,
+                nu_u=row.speed_ratio_to_ref * m_tip_f * radii[k] / model.r_tip_ref,
+                nu_x_in=nu_x[station_in],
+                nu_x_out=nu_x[station_out],
+                nu_theta_in=nu_theta[station_in],
+                nu_theta_out=nu_theta[station_out],
+                delta_nu_theta=NaN,
+                tau_in=tau[station_in],
+                tau_out=tau[station_out],
+                delta_tau=NaN,
+                pi_in=pi[station_in],
+                pi_out=pi[station_out],
+                delta_pi=NaN,
+                k_theta_exit=NaN,
+                delta_s_hat=NaN,
+                stall_margin=NaN,
+                incidence=NaN,
+                deviation=NaN,
+                theta_in=NaN,
+                theta_out=NaN,
+                valid=false,
+                stall=false,
+                choke=false,
+            )
+        end
+    end
+
+    station_data = _build_station_data(model, radii, tau, pi, nu_theta, nu_x)
 
     model_valid = all(valid_row)
     model_choke = any(choke_row)
@@ -315,13 +468,26 @@ function streamtube_solve(
             stall_row=stall_row,
             choke_row=choke_row,
             valid_row=valid_row,
+            station_data=station_data,
+            row_data=row_data,
         )
     end
 
     tau_out = tau[end]
     pi_out = pi[end]
-    eta_tt = if (tau_out > 0) && (pi_out > 0) && (abs(tau_out - 1) > 1e-12)
-        eta = (pi_out^((model.gamma - 1) / model.gamma) - 1) / (tau_out - 1)
+    eta_tt = if (tau_out > 0) && (pi_out > 0)
+        tau_is_out = pi_out^((model.gamma - 1) / model.gamma)
+        d_actual = tau_out - 1
+        d_is = tau_is_out - 1
+        eta = if abs(d_actual) <= 1e-12 || abs(d_is) <= 1e-12
+            NaN
+        elseif signbit(d_actual) != signbit(d_is)
+            NaN
+        elseif d_actual > 0
+            d_is / d_actual
+        else
+            d_actual / d_is
+        end
         isfinite(eta) ? eta : NaN
     else
         NaN
@@ -340,6 +506,8 @@ function streamtube_solve(
         stall_row=stall_row,
         choke_row=choke_row,
         valid_row=valid_row,
+        station_data=station_data,
+        row_data=row_data,
     )
 end
 

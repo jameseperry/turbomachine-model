@@ -3,47 +3,42 @@
 using ArgParse
 using TurboMachineModel
 
-const Compressor = TurboMachineModel.Physics.Turbomachine.Compressor
-const Turbine = TurboMachineModel.Physics.Turbomachine.Turbine
+const Turbomachine = TurboMachineModel.Physics.Turbomachine
+const AxialMachine = TurboMachineModel.Physics.Turbomachine.AxialMachine
 
 function _parse_object_type(raw::AbstractString)
     key = lowercase(strip(raw))
     if key in ("compressor_tabulated", "compressor")
         return :compressor_tabulated
-    elseif key in ("compressor_nondimensional_tabulated", "compressor_nondimensional", "compressor_nd")
-        return :compressor_nondimensional_tabulated
-    elseif key in ("compressor_meanline_model", "compressor_meanline", "meanline")
-        return :compressor_meanline_model
-    elseif key in ("compressor_meanline_turbine_model", "compressor_turbine_meanline", "meanline_turbine", "axial_turbine_model")
-        return :compressor_meanline_turbine_model
+    elseif key in ("axial_compressor_model", "axial_compressor", "compressor_meanline_model", "compressor_meanline", "meanline")
+        return :axial_compressor_model
+    elseif key in ("axial_turbine_model", "axial_turbine", "compressor_meanline_turbine_model", "compressor_turbine_meanline", "meanline_turbine")
+        return :axial_turbine_model
     elseif key in ("turbine_tabulated", "turbine")
         return :turbine_tabulated
     end
     error(
-        "unsupported object_type=$(raw) (expected compressor_tabulated|compressor_nondimensional_tabulated|compressor_meanline_model|compressor_meanline_turbine_model|turbine_tabulated)",
+        "unsupported object_type=$(raw) (expected compressor_tabulated|axial_compressor_model|axial_turbine_model|turbine_tabulated)",
     )
 end
 
 function _default_group(object_type::Symbol)
-    object_type == :compressor_tabulated && return "compressor_map"
-    object_type == :compressor_nondimensional_tabulated && return "compressor_map"
-    object_type == :compressor_meanline_model && return "compressor_meanline_model"
-    object_type == :compressor_meanline_turbine_model && return "compressor_meanline_model"
-    object_type == :turbine_tabulated && return "turbine_map"
+    object_type == :compressor_tabulated && return "performance_map"
+    object_type == :axial_compressor_model && return "axial_model"
+    object_type == :axial_turbine_model && return "axial_model"
+    object_type == :turbine_tabulated && return "performance_map"
     error("unsupported object_type=$(object_type)")
 end
 
 function _build_demo_object(object_type::Symbol, interpolation::Symbol)
     if object_type == :compressor_tabulated
-        return Compressor.demo_tabulated_compressor_performance_map(; interpolation=interpolation)
-    elseif object_type == :compressor_nondimensional_tabulated
-        return Compressor.demo_nondimensional_tabulated_compressor_performance_map(; interpolation=interpolation)
-    elseif object_type == :compressor_meanline_model
-        return Compressor.demo_compressor_meanline_model()
-    elseif object_type == :compressor_meanline_turbine_model
-        return Compressor.demo_turbine_meanline_model()
+        return Turbomachine.demo_tabulated_performance_map_compressor(; interpolation=interpolation)
+    elseif object_type == :axial_compressor_model
+        return Turbomachine.demo_axial_compressor_model()
+    elseif object_type == :axial_turbine_model
+        return Turbomachine.demo_axial_turbine_model()
     elseif object_type == :turbine_tabulated
-        return Turbine.demo_tabulated_turbine_performance_map(; interpolation=interpolation)
+        return Turbomachine.demo_tabulated_performance_map_turbine(; interpolation=interpolation)
     end
     error("unsupported object_type=$(object_type)")
 end
@@ -56,7 +51,7 @@ function _build_parser()
 
     @add_arg_table! settings begin
         "object_type"
-            help = "demo object type: compressor_tabulated, compressor_nondimensional_tabulated, compressor_meanline_model, compressor_meanline_turbine_model, or turbine_tabulated"
+            help = "demo object type: compressor_tabulated, axial_compressor_model, axial_turbine_model, or turbine_tabulated"
             required = true
         "output_path"
             help = "output TOML path"
@@ -86,15 +81,10 @@ function _main(args::Vector{String}=ARGS)
     group = isnothing(parsed["group"]) ? _default_group(object_type) : parsed["group"]
     obj = _build_demo_object(object_type, interpolation)
 
-    if object_type in (
-        :compressor_tabulated,
-        :compressor_nondimensional_tabulated,
-        :compressor_meanline_model,
-        :compressor_meanline_turbine_model,
-    )
-        Compressor.write_toml(obj, output_path; group=group)
-    elseif object_type == :turbine_tabulated
-        Turbine.write_toml(obj, output_path; group=group)
+    if object_type == :compressor_tabulated || object_type == :turbine_tabulated
+        Turbomachine.write_toml(obj, output_path; group=group)
+    elseif object_type in (:axial_compressor_model, :axial_turbine_model)
+        AxialMachine.write_toml(obj, output_path; group=group)
     else
         error("unsupported object_type=$(object_type)")
     end

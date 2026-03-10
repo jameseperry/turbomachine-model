@@ -1,8 +1,8 @@
 @testset "Physics" begin
     P = TurboMachineModel.Physics.Fluids
     TP = TurboMachineModel.Physics
-    TM = TP.Turbomachine.Compressor
-    TT = TP.Turbomachine.Turbine
+    TM = TP.Turbomachine
+    TTM = TP.Turbomachine
     AM = TP.Turbomachine.AxialMachine
     U = TurboMachineModel.Utility
 
@@ -23,7 +23,7 @@
     @test_throws ErrorException P.velocity_from_massflow(1.0, 0.0, 0.5)
     @test_throws ErrorException P.velocity_from_massflow(1.0, 1.0, 0.0)
 
-    pm = TM.TabulatedCompressorPerformanceMap(
+    pm = TM.TabulatedPerformanceMap(
         300.0,
         100_000.0,
         [1.0, 2.0],
@@ -34,13 +34,13 @@
     )
 
     vals = TM.performance_from_stagnation(pm, 1.5, 15.0, 300.0, 100_000.0)
-    @test isapprox(vals.PR, 3.5; rtol=1e-12)
+    @test isapprox(vals.pressure_ratio, 3.5; rtol=1e-12)
     @test isapprox(vals.eta, 0.86; rtol=1e-12)
     @test vals.valid
-    @test !vals.stall
-    @test !vals.choke
+    @test !vals.low_flow
+    @test !vals.high_flow
 
-    pm_limited = TM.TabulatedCompressorPerformanceMap(
+    pm_limited = TM.TabulatedPerformanceMap(
         300.0,
         100_000.0,
         [1.0, 2.0],
@@ -48,22 +48,22 @@
         [2.0 3.0; 4.0 5.0],
         [0.8 0.82; 0.9 0.92];
         interpolation=:bilinear,
-        mdot_corr_surge=[12.0, 14.0],
-        mdot_corr_choke=[18.0, 19.0],
+        flow_min=[12.0, 14.0],
+        flow_max=[18.0, 19.0],
     )
     vals_stall = TM.performance_from_stagnation(pm_limited, 1.5, 12.0, 300.0, 100_000.0)
     vals_choke = TM.performance_from_stagnation(pm_limited, 1.5, 19.0, 300.0, 100_000.0)
     vals_mid = TM.performance_from_stagnation(pm_limited, 1.5, 15.5, 300.0, 100_000.0)
-    @test vals_stall.stall
+    @test vals_stall.low_flow
     @test !vals_stall.valid
-    @test vals_choke.choke
+    @test vals_choke.high_flow
     @test !vals_choke.valid
     @test vals_mid.valid
     pm_limited_domain = TM.performance_map_domain(pm_limited, 300.0, 100_000.0)
-    @test isapprox(pm_limited_domain.mdot_flow_range.surge(1.5), 13.0; rtol=1e-12)
-    @test isapprox(pm_limited_domain.mdot_flow_range.choke(1.5), 18.5; rtol=1e-12)
+    @test isapprox(pm_limited_domain.mdot_flow_range.min(1.5), 13.0; rtol=1e-12)
+    @test isapprox(pm_limited_domain.mdot_flow_range.max(1.5), 18.5; rtol=1e-12)
 
-    pm_bicubic = TM.TabulatedCompressorPerformanceMap(
+    pm_bicubic = TM.TabulatedPerformanceMap(
         300.0,
         100_000.0,
         [1.0, 2.0, 3.0],
@@ -73,15 +73,15 @@
         interpolation=:bicubic,
     )
     vals_bicubic = TM.performance_from_stagnation(pm_bicubic, 2.5, 15.0, 300.0, 100_000.0)
-    @test isapprox(vals_bicubic.PR, 8.5; rtol=1e-12)
+    @test isapprox(vals_bicubic.pressure_ratio, 8.5; rtol=1e-12)
 
     from_inlet = TM.performance_from_stagnation(pm, 10_000.0, 15.0, 300.0, 100_000.0)
     @test isapprox(from_inlet.speed_coord, 10_000.0; rtol=1e-12)
     @test isapprox(from_inlet.flow_coord, 15.0; rtol=1e-12)
-    @test isapprox(from_inlet.PR, 4.5; rtol=1e-12)
+    @test isapprox(from_inlet.pressure_ratio, 4.5; rtol=1e-12)
     @test isapprox(from_inlet.eta, 0.91; rtol=1e-12)
 
-    cmp_demo = TM.demo_tabulated_compressor_performance_map()
+    cmp_demo = TM.demo_tabulated_performance_map_compressor()
     cmp_vals = TM.performance_from_stagnation(
         cmp_demo,
         800.0,
@@ -89,102 +89,30 @@
         cmp_demo.Tt_ref,
         cmp_demo.Pt_ref,
     )
-    @test cmp_vals.PR > 1.0
+    @test cmp_vals.pressure_ratio > 1.0
     cmp_domain = TM.performance_map_domain(cmp_demo, cmp_demo.Tt_ref, cmp_demo.Pt_ref)
     @test cmp_domain.omega == (600.0, 1000.0)
     @test cmp_domain.mdot == (12.0, 20.0)
-    @test isapprox(cmp_domain.mdot_flow_range.surge(750.0), 12.0; rtol=1e-12)
-    @test isapprox(cmp_domain.mdot_flow_range.choke(750.0), 20.0; rtol=1e-12)
+    @test isapprox(cmp_domain.mdot_flow_range.min(750.0), 12.0; rtol=1e-12)
+    @test isapprox(cmp_domain.mdot_flow_range.max(750.0), 20.0; rtol=1e-12)
 
-    @testset "Compressor Map Coordinate Conversion" begin
-        src = TM.demo_tabulated_compressor_performance_map(; interpolation=:bilinear)
+    @testset "Common Map Coordinate Helpers" begin
+        @test isapprox(TM.corrected_speed(10_000.0, 300.0, 300.0), 10_000.0; rtol=1e-12)
+        @test isapprox(TM.physical_speed(10_000.0, 300.0, 300.0), 10_000.0; rtol=1e-12)
+        @test isapprox(TM.corrected_flow(15.0, 300.0, 100_000.0, 300.0, 100_000.0), 15.0; rtol=1e-12)
+        @test isapprox(TM.physical_flow(15.0, 300.0, 100_000.0, 300.0, 100_000.0), 15.0; rtol=1e-12)
+    end
 
-        gamma = 1.4
-        gas_constant = 287.05
-        tip_radius_inlet = 0.22
-        mean_radius_inlet = 0.18
-        inlet_area = 0.060
-        Tt_ref = src.Tt_ref
-        Pt_ref = src.Pt_ref
-        omega_ref_line = 800.0
-
-        src_omega_grid = collect(U.table_xgrid(src.pr_map))
-        src_mdot_corr_grid = collect(U.table_ygrid(src.pr_map))
-        dim_grids = TM.corrected_grids_to_physical_grids(
-            src,
-            src_omega_grid,
-            src_mdot_corr_grid,
-            Tt_ref,
-            Pt_ref,
-        )
-        @test dim_grids.omega_grid == Float64.(src_omega_grid)
-        @test dim_grids.mdot_grid == Float64.(src_mdot_corr_grid)
-        m_tip_grid = [
-            omega * tip_radius_inlet / sqrt(gamma * gas_constant * Tt_ref) for omega in src_omega_grid
-        ]
-        rho0_ref = Pt_ref / (gas_constant * Tt_ref)
-        phi_in_grid = [
-            mdot / (rho0_ref * inlet_area * omega_ref_line * mean_radius_inlet) for mdot in src_mdot_corr_grid
-        ]
-        nd_grids = TM.physical_grids_to_nondimensional_grids(
-            dim_grids.omega_grid,
-            dim_grids.mdot_grid;
-            gamma=gamma,
-            gas_constant=gas_constant,
-            tip_radius_inlet=tip_radius_inlet,
-            mean_radius_inlet=mean_radius_inlet,
-            inlet_area=inlet_area,
-            Tt_in=Tt_ref,
-            Pt_in=Pt_ref,
-            omega_ref_for_phi=omega_ref_line,
-        )
-        @test isapprox(nd_grids.m_tip_grid, m_tip_grid; rtol=0, atol=1e-12)
-        @test isapprox(nd_grids.phi_in_grid, phi_in_grid; rtol=0, atol=1e-12)
-
-        nd = TM.to_nondimensional_tabulated_compressor_map(
-            src;
-            gamma=gamma,
-            gas_constant=gas_constant,
-            tip_radius_inlet=tip_radius_inlet,
-            mean_radius_inlet=mean_radius_inlet,
-            inlet_area=inlet_area,
-            Tt_in_ref=Tt_ref,
-            Pt_in_ref=Pt_ref,
-            m_tip_grid=m_tip_grid,
-            phi_in_grid=phi_in_grid,
-            interpolation=:bilinear,
-        )
-        @test nd isa TM.NonDimensionalTabulatedCompressorPerformanceMap
-
-        src_vals = TM.performance_from_stagnation(src, 800.0, 16.0, Tt_ref, Pt_ref)
-        nd_vals = TM.performance_from_stagnation(nd, 800.0, 16.0, Tt_ref, Pt_ref)
-        @test isapprox(nd_vals.PR, src_vals.PR; rtol=1e-10)
-        @test isapprox(nd_vals.eta, src_vals.eta; rtol=1e-10)
-
-        back = TM.to_tabulated_compressor_map(
-            nd;
-            Tt_in_ref=Tt_ref,
-            Pt_in_ref=Pt_ref,
-            Tt_ref=Tt_ref,
-            Pt_ref=Pt_ref,
-            omega_corr_grid=src_omega_grid,
-            mdot_corr_grid=src_mdot_corr_grid,
-            interpolation=:bilinear,
-        )
-        @test back isa TM.TabulatedCompressorPerformanceMap
-
-        back_vals = TM.performance_from_stagnation(back, 800.0, 16.0, Tt_ref, Pt_ref)
-        src_grid_vals = TM.performance_from_stagnation(src, 800.0, 16.0, Tt_ref, Pt_ref)
-        @test isapprox(back_vals.PR, src_grid_vals.PR; rtol=1e-10)
-        @test isapprox(back_vals.eta, src_grid_vals.eta; rtol=1e-10)
-        back_domain = TM.performance_map_domain(back, Tt_ref, Pt_ref)
-        @test isapprox(back_domain.mdot_flow_range.surge(800.0), 12.0; rtol=1e-10)
-        @test isapprox(back_domain.mdot_flow_range.choke(800.0), 20.0; rtol=1e-10)
+    @testset "Linear Resampling" begin
+        @test U.resample_linear([0.0, 1.0, 2.0], [0.0, 10.0, 20.0], 0.5) ≈ 5.0
+        @test U.resample_linear([0.0, 1.0, 2.0], [0.0, 10.0, 20.0], [0.5, 1.5]) ≈ [5.0, 15.0]
+        @test isnan(U.resample_linear([0.0, 1.0], [0.0, 10.0], -1.0; extrapolation=:nan))
+        @test U.resample_linear([2.0, 1.0, 1.0, 0.0], [20.0, 10.0, 12.0, 0.0], 1.0; sort_inputs=true, deduplicate=:mean) ≈ 11.0
     end
 
     @testset "Turbomachine Residuals" begin
         eos = P.ideal_EOS()[:air]
-        map = TM.TabulatedCompressorPerformanceMap(
+        map = TM.TabulatedPerformanceMap(
             300.0,
             100_000.0,
             [1.0, 2.0],
@@ -202,7 +130,7 @@
         ht_out = ht_in + (h2s - ht_in) / 0.8
         tau = mdot * (ht_out - ht_in) / omega
 
-        R_pout, R_dh_eff, R_P = TM.compressor_residuals(
+        R_pout, R_dh_eff, R_P = TTM.compressor_residuals(
             map,
             eos,
             pt_in,
@@ -220,7 +148,7 @@
 
     @testset "Turbomachine Scaled Residuals" begin
         eos = P.ideal_EOS()[:air]
-        map = TM.TabulatedCompressorPerformanceMap(
+        map = TM.TabulatedPerformanceMap(
             300.0,
             100_000.0,
             [1.0, 2.0],
@@ -237,7 +165,7 @@
         ht_out = 380_000.0
         tau = 120.0
 
-        R_pout, R_dh_eff, R_P = TM.compressor_residuals(
+        R_pout, R_dh_eff, R_P = TTM.compressor_residuals(
             map,
             eos,
             pt_in,
@@ -249,7 +177,7 @@
             tau,
         )
 
-        scales = TM.compressor_residual_scales(
+        scales = TTM.compressor_residual_scales(
             pt_in,
             ht_in,
             pt_out,
@@ -258,7 +186,7 @@
             omega,
             tau,
         )
-        r_pout, r_dh_eff, r_P = TM.compressor_residuals_scaled(
+        r_pout, r_dh_eff, r_P = TTM.compressor_residuals_scaled(
             map,
             eos,
             pt_in,
@@ -273,7 +201,7 @@
         @test isapprox(r_dh_eff, R_dh_eff / scales.enthalpy_scale; rtol=1e-12)
         @test isapprox(r_P, R_P / scales.power_scale; rtol=1e-12)
 
-        r2_pout, r2_dh_eff, r2_P = TM.compressor_residuals_scaled(
+        r2_pout, r2_dh_eff, r2_P = TTM.compressor_residuals_scaled(
             map,
             eos,
             pt_in,
@@ -292,12 +220,33 @@
         @test isapprox(r2_P, R_P / 3.0e6; rtol=1e-12)
     end
 
-    @testset "Turbomachine Operating Point Solve" begin
+    @testset "Operating Point Solve (New API)" begin
         eos = P.ideal_EOS()[:air]
-        map = TM.TabulatedCompressorPerformanceMap(
+        demo_cmp = TP.Turbomachine.demo_tabulated_performance_map_compressor()
+        demo_turb = TP.Turbomachine.demo_tabulated_performance_map_turbine()
+        @test demo_cmp isa TP.Turbomachine.TabulatedPerformanceMap
+        @test demo_turb isa TP.Turbomachine.TabulatedPerformanceMap
+
+        common_vals = TP.Turbomachine.performance_from_stagnation(
+            demo_cmp,
+            800.0 * sqrt(432.0 / demo_cmp.Tt_ref),
+            16.0 * (demo_cmp.Pt_ref / demo_cmp.Pt_ref) / sqrt(432.0 / demo_cmp.Tt_ref),
+            432.0,
+            demo_cmp.Pt_ref,
+        )
+        @test isapprox(common_vals.pressure_ratio, 1.80; rtol=1e-10)
+        @test isapprox(common_vals.eta, 0.83; rtol=1e-10)
+        @test isapprox(common_vals.speed_coord, 800.0; rtol=1e-10)
+        @test isapprox(common_vals.flow_coord, 16.0; rtol=1e-10)
+        common_domain = TP.Turbomachine.performance_map_domain(demo_cmp, 432.0, demo_cmp.Pt_ref)
+        omega_scale = sqrt(432.0 / demo_cmp.Tt_ref)
+        @test isapprox(common_domain.omega[1], 600.0 * omega_scale; rtol=1e-10)
+        @test isapprox(common_domain.omega[2], 1000.0 * omega_scale; rtol=1e-10)
+
+        map = TP.Turbomachine.TabulatedPerformanceMap(
             300.0,
             100_000.0,
-            [1.0, 2.0],
+            [1_000.0, 2_000.0],
             [10.0, 20.0],
             [1.8 2.2; 1.8 2.2],
             [0.8 0.8; 0.8 0.8];
@@ -305,147 +254,291 @@
         )
 
         pt_in = 100_000.0
-        ht_in = 300_000.0
+        Tt_in = 432.0
+        ht_in = P.enthalpy_from_temperature(eos, Tt_in)
         pt_out = 200_000.0
-        omega = 12_000.0
+        omega = 1_500.0 * sqrt(Tt_in / map.Tt_ref)
 
-        Tt_in = P.temperature(eos, pt_in, ht_in)
         mdot_expected = 15.0 * (pt_in / map.Pt_ref) / sqrt(Tt_in / map.Tt_ref)
         h2s = P.isentropic_enthalpy(eos, pt_in, ht_in, pt_out)
         ht_out_expected = ht_in + (h2s - ht_in) / 0.8
         tau_expected = mdot_expected * (ht_out_expected - ht_in) / omega
 
-        sol = TM.solve_compressor_operating_point(
+        sol = TP.Turbomachine.solve_operating_point(
             map,
             eos;
             pt_in=pt_in,
             ht_in=ht_in,
             pt_out=pt_out,
             omega=omega,
-            mdot_guess=mdot_expected * 0.9,
-            ht_out_guess=ht_out_expected * 1.05,
-            tau_guess=tau_expected * 0.8,
         )
 
         @test sol.converged
-        @test isapprox(sol.mdot, mdot_expected; rtol=1e-8)
-        @test isapprox(sol.ht_out, ht_out_expected; rtol=1e-8)
-        @test isapprox(sol.tau, tau_expected; rtol=1e-8)
-        @test isapprox(sol.residuals[1], 0.0; atol=1e-9)
-        @test isapprox(sol.residuals[2], 0.0; atol=1e-9)
-        @test isapprox(sol.residuals[3], 0.0; atol=1e-9)
-    end
+        @test sol.retcode == :success
+        @test sol.n_candidates == 1
+        candidate = only(sol.candidates)
+        @test isapprox(candidate.mdot, mdot_expected; rtol=1e-8)
+        @test isapprox(candidate.ht_out, ht_out_expected; rtol=1e-8)
+        @test isapprox(candidate.tau, tau_expected; rtol=1e-8)
+        @test isapprox(candidate.pressure_ratio, 2.0; rtol=1e-10)
+        @test isapprox(candidate.efficiency, 0.8; rtol=1e-10)
+        @test isapprox(candidate.residuals[1], 0.0; atol=1e-9)
+        @test isapprox(candidate.residuals[2], 0.0; atol=1e-9)
+        @test isapprox(candidate.residuals[3], 0.0; atol=1e-9)
+        @test candidate.physically_admissible
+        @test isapprox(candidate.machine_payload.speed_coord, 1_500.0; rtol=1e-10)
+        @test isapprox(candidate.machine_payload.flow_coord, 15.0; rtol=1e-10)
 
-    @testset "Turbine APIs" begin
-        eos = P.ideal_EOS()[:air]
-        map = TT.TabulatedTurbinePerformanceMap(
+        multi_root_map = TP.Turbomachine.TabulatedPerformanceMap(
             300.0,
             100_000.0,
-            [1.0, 2.0],
-            [2.0, 3.0],
-            [10.0 12.0; 14.0 16.0],
-            [0.85 0.86; 0.87 0.88];
+            [1_000.0, 2_000.0],
+            [10.0, 15.0, 20.0],
+            [2.0 3.0 2.0; 2.0 3.0 2.0],
+            [0.8 0.8 0.8; 0.8 0.8 0.8];
             interpolation=:bilinear,
         )
 
-        vals = TT.turbine_performance_map(map, 1.5, 2.5)
-        @test isapprox(vals.mdot_corr, 13.0; rtol=1e-12)
-        @test isapprox(vals.eta, 0.865; rtol=1e-12)
-        domain = TT.performance_map_domain(map)
-        @test domain.omega_corr == (1.0, 2.0)
-        @test domain.pr_turb == (2.0, 3.0)
+        multi_pt_in = 100_000.0
+        multi_Tt_in = 432.0
+        multi_ht_in = P.enthalpy_from_temperature(eos, multi_Tt_in)
+        multi_pt_out = 250_000.0
+        multi_omega = 1_500.0 * sqrt(multi_Tt_in / multi_root_map.Tt_ref)
+        multi_flow_scale = (multi_pt_in / multi_root_map.Pt_ref) / sqrt(multi_Tt_in / multi_root_map.Tt_ref)
 
-        from_stag = TT.turbine_performance_map_from_stagnation(map, 1.5, 200_000.0, 100_000.0, 300.0)
-        @test isapprox(from_stag.omega_corr, 1.5; rtol=1e-12)
-        @test isapprox(from_stag.PR_turb, 2.0; rtol=1e-12)
-        @test isapprox(from_stag.mdot_corr, 12.0; rtol=1e-12)
-        @test isapprox(from_stag.mdot, 24.0; rtol=1e-12)
-        @test isapprox(from_stag.eta, 0.86; rtol=1e-12)
+        multi_sol = TP.Turbomachine.solve_operating_point(
+            multi_root_map,
+            eos;
+            pt_in=multi_pt_in,
+            ht_in=multi_ht_in,
+            pt_out=multi_pt_out,
+            omega=multi_omega,
+            continuation_hints=[12.0, 18.0],
+        )
 
-        map_const = TT.TabulatedTurbinePerformanceMap(
+        @test multi_sol.converged
+        @test multi_sol.retcode == :success
+        @test multi_sol.n_candidates == 2
+        @test isapprox(multi_sol.candidates[1].mdot, 12.5 * multi_flow_scale; atol=1e-8)
+        @test isapprox(multi_sol.candidates[2].mdot, 17.5 * multi_flow_scale; atol=1e-8)
+
+        low_branch = TP.Turbomachine.select_operating_point_branch(multi_sol; policy=:low)
+        high_branch = TP.Turbomachine.select_operating_point_branch(multi_sol; policy=:high)
+        near_low = TP.Turbomachine.select_operating_point_branch(
+            multi_sol;
+            policy=:nearest,
+            reference_coordinate=12.0 * multi_flow_scale,
+        )
+        @test isapprox(low_branch.mdot, multi_sol.candidates[1].mdot; atol=1e-8)
+        @test isapprox(high_branch.mdot, multi_sol.candidates[2].mdot; atol=1e-8)
+        @test isapprox(near_low.mdot, multi_sol.candidates[1].mdot; atol=1e-8)
+
+        no_solution = TP.Turbomachine.solve_operating_point(
+            map,
+            eos;
+            pt_in=pt_in,
+            ht_in=ht_in,
+            pt_out=350_000.0,
+            omega=omega,
+        )
+        @test !no_solution.converged
+        @test no_solution.retcode == :no_candidate
+        @test isempty(no_solution.candidates)
+
+        axial_model = TP.Turbomachine.demo_axial_compressor_model()
+        axial_map = TP.Turbomachine.tabulate_axial_machine_model(
+            axial_model;
+            n_speed=5,
+            n_flow=7,
+            Tt_in_ref=288.15,
+            Pt_in_ref=101_325.0,
+            Tt_ref=288.15,
+            Pt_ref=101_325.0,
+            interpolation=:bilinear,
+            boundary_resolution=81,
+            want_diagnostics=false,
+        )
+        omega_diag = TP.Turbomachine.physical_speed(
+            TP.Turbomachine.tabulated_speed_grid(axial_map)[3],
+            axial_map.Tt_ref,
+            axial_map.Tt_ref,
+        )
+        mdot_diag = TP.Turbomachine.physical_flow(
+            TP.Turbomachine.tabulated_flow_grid(axial_map)[4],
+            axial_map.Tt_ref,
+            axial_map.Pt_ref,
+            axial_map.Tt_ref,
+            axial_map.Pt_ref,
+        )
+        axial_vals = TP.Turbomachine.performance_from_stagnation(
+            axial_map,
+            omega_diag,
+            mdot_diag,
+            axial_map.Tt_ref,
+            axial_map.Pt_ref,
+        )
+        diag_sol = TP.Turbomachine.solve_operating_point(
+            axial_map,
+            eos;
+            pt_in=axial_map.Pt_ref,
+            ht_in=P.enthalpy_from_temperature(eos, axial_map.Tt_ref),
+            pt_out=axial_vals.pressure_ratio * axial_map.Pt_ref,
+            omega=omega_diag,
+        )
+        @test diag_sol.converged
+        @test diag_sol.n_candidates >= 1
+        diag_candidate = TP.Turbomachine.select_operating_point_branch(
+            diag_sol;
+            policy=:nearest,
+            reference_coordinate=mdot_diag,
+        )
+        @test diag_candidate !== nothing
+        replay = TP.Turbomachine.replay_operating_point_with_streamtube(
+            axial_model,
+            eos,
+            diag_candidate;
+            pt_in=axial_map.Pt_ref,
+            ht_in=P.enthalpy_from_temperature(eos, axial_map.Tt_ref),
+            omega=omega_diag,
+        )
+        @test length(replay.nondimensional.station_data) == length(axial_model.rows) + 1
+        @test length(replay.nondimensional.row_data) == length(axial_model.rows)
+        @test length(replay.physical.station_data) == length(axial_model.rows) + 1
+        @test length(replay.physical.row_data) == length(axial_model.rows)
+        @test haskey(replay.physical.station_data[1], :pt)
+        @test haskey(replay.physical.row_data[1], :alpha_in)
+        @test haskey(replay.physical.row_data[1], :W_in)
+        @test haskey(replay.physical.row_data[1], :omega_row)
+        @test haskey(replay.physical.row_data[1], :delta_ht)
+        @test haskey(replay.physical.row_data[1], :euler_work)
+        @test haskey(replay.physical.row_data[1], :thermo_efficiency)
+        @test haskey(replay.physical.row_data[1], :WMach_in)
+        @test haskey(replay.physical.row_data[1], :psi_row)
+        @test haskey(replay.physical.row_data[1], :stator_loss_coefficient)
+        @test haskey(replay.physical.station_data[1], :mdot_station)
+        @test haskey(replay.summary, :pressure_ratio_error)
+        @test haskey(replay.summary, :ht_out_error)
+        @test haskey(replay.summary, :streamtube_thermo_efficiency)
+
+        direct_diag = TP.Turbomachine.diagnose_axial_operating_point(
+            axial_model,
+            eos;
+            pt_in=axial_map.Pt_ref,
+            ht_in=P.enthalpy_from_temperature(eos, axial_map.Tt_ref),
+            omega=omega_diag,
+            mdot=mdot_diag,
+        )
+        @test haskey(direct_diag.summary, :pressure_ratio)
+        @test haskey(direct_diag.summary, :power)
+        @test haskey(direct_diag.summary, :thermo_efficiency)
+        @test length(direct_diag.physical.row_data) == length(axial_model.rows)
+
+        turbine_model = TP.Turbomachine.demo_axial_turbine_model()
+        turbine_diag = TP.Turbomachine.diagnose_axial_operating_point(
+            turbine_model,
+            eos;
+            pt_in=101_325.0,
+            ht_in=P.enthalpy_from_temperature(eos, 288.15),
+            omega=600.0,
+            mdot=8.0,
+        )
+        @test turbine_diag.summary.pressure_ratio < 1.0
+        @test isapprox(turbine_diag.summary.efficiency, turbine_diag.summary.thermo_efficiency; rtol=1e-10, atol=1e-10)
+    end
+
+    @testset "Operating Point Sweep (New API)" begin
+        eos = P.ideal_EOS()[:air]
+        map = TP.Turbomachine.TabulatedPerformanceMap(
             300.0,
             100_000.0,
-            [1.0, 2.0],
-            [2.0, 3.0],
-            [10.0 10.0; 10.0 10.0],
+            [1_000.0, 2_000.0],
+            [10.0, 20.0],
+            [1.8 2.2; 1.8 2.2],
             [0.8 0.8; 0.8 0.8];
             interpolation=:bilinear,
         )
 
         pt_in = 100_000.0
-        ht_in = 300_000.0
-        pt_out = 50_000.0
-        omega = 1.5
-        Tt_in = P.temperature(eos, pt_in, ht_in)
-        map_vals = TT.turbine_performance_map_from_stagnation(map_const, omega, pt_in, pt_out, Tt_in)
-        mdot = map_vals.mdot
-        h2s = P.isentropic_enthalpy(eos, pt_in, ht_in, pt_out)
-        ht_out = ht_in - map_vals.eta * (ht_in - h2s)
-        tau = mdot * (ht_out - ht_in) / omega
-
-        R_mdot_map, R_dh_eff, R_P = TT.turbine_residuals(
-            map_const,
-            eos,
-            pt_in,
-            ht_in,
-            pt_out,
-            ht_out,
-            mdot,
-            omega,
-            tau,
-        )
-        @test isapprox(R_mdot_map, 0.0; atol=1e-8)
-        @test isapprox(R_dh_eff, 0.0; atol=1e-8)
-        @test isapprox(R_P, 0.0; atol=1e-8)
-
-        sol = TT.solve_turbine_operating_point(
-            map_const,
+        Tt_in = 432.0
+        ht_in = P.enthalpy_from_temperature(eos, Tt_in)
+        omega_grid = sqrt(Tt_in / map.Tt_ref) .* [1_000.0, 1_500.0, 2_000.0]
+        pt_out_grid = [200_000.0]
+        sweep = TP.Turbomachine.solve_operating_sweep(
+            map,
             eos;
             pt_in=pt_in,
             ht_in=ht_in,
-            pt_out=pt_out,
-            omega=omega,
-            mdot_guess=mdot * 1.1,
-            ht_out_guess=ht_out * 0.95,
-            tau_guess=tau * 1.2,
+            omega_grid=omega_grid,
+            pt_out_grid=pt_out_grid,
+            branch_selection=:nearest,
+            initial_branch_coordinate=15.0,
         )
-        @test sol.converged
-        @test isapprox(sol.mdot, mdot; rtol=1e-8)
-        @test isapprox(sol.ht_out, ht_out; rtol=1e-8)
-        @test isapprox(sol.tau, tau; rtol=1e-8)
+
+        @test sweep.mode == :single
+        @test size(sweep.mdot) == (length(omega_grid), length(pt_out_grid))
+        @test all(sweep.converged)
+        for i in eachindex(omega_grid)
+            mdot_expected = 15.0 * (pt_in / map.Pt_ref) / sqrt(Tt_in / map.Tt_ref)
+            @test isapprox(sweep.mdot[i, 1], mdot_expected; rtol=1e-8)
+            @test isapprox(sweep.PR[i, 1], 2.0; rtol=1e-10)
+            @test isapprox(sweep.eta[i, 1], 0.8; rtol=1e-10)
+        end
+
+        multi_root_map = TP.Turbomachine.TabulatedPerformanceMap(
+            300.0,
+            100_000.0,
+            [1_000.0, 2_000.0],
+            [10.0, 15.0, 20.0],
+            [2.0 3.0 2.0; 2.0 3.0 2.0],
+            [0.8 0.8 0.8; 0.8 0.8 0.8];
+            interpolation=:bilinear,
+        )
+        sweep_all = TP.Turbomachine.solve_operating_sweep(
+            multi_root_map,
+            eos;
+            pt_in=pt_in,
+            ht_in=ht_in,
+            omega_grid=fill(1_500.0 * sqrt(Tt_in / multi_root_map.Tt_ref), 2),
+            pt_out_grid=[250_000.0],
+            track_all_branches=true,
+        )
+
+        @test sweep_all.mode == :all
+        @test length(sweep_all.rows) == 4
+        good_rows = filter(row -> row.converged, sweep_all.rows)
+        @test length(good_rows) == 4
+        @test length(unique(row.branch_id for row in good_rows)) == 2
+        @test all(row -> isfinite(row.mdot), good_rows)
     end
 
     @testset "Map IO" begin
+        common_map = TP.Turbomachine.demo_tabulated_performance_map_compressor(; interpolation=:bilinear)
+        common_map_toml_path = tempname() * ".toml"
+        TP.Turbomachine.write_toml(common_map, common_map_toml_path)
+        common_map_loaded = TP.Turbomachine.read_toml(TP.Turbomachine.TabulatedPerformanceMap, common_map_toml_path)
+        @test common_map_loaded isa TP.Turbomachine.TabulatedPerformanceMap
+        @test TP.Turbomachine.tabulated_speed_grid(common_map_loaded) == TP.Turbomachine.tabulated_speed_grid(common_map)
+        @test TP.Turbomachine.tabulated_flow_grid(common_map_loaded) == TP.Turbomachine.tabulated_flow_grid(common_map)
+        @test TP.Turbomachine.tabulated_pressure_ratio_table(common_map_loaded) == TP.Turbomachine.tabulated_pressure_ratio_table(common_map)
+        @test TP.Turbomachine.tabulated_eta_table(common_map_loaded) == TP.Turbomachine.tabulated_eta_table(common_map)
+
         table_map_toml_path = tempname() * ".toml"
-        U.write_toml(pm.pr_map, table_map_toml_path)
+        U.write_toml(pm.pressure_ratio_map, table_map_toml_path)
         table_map_toml_loaded = U.read_toml(U.AbstractTableMap, table_map_toml_path)
         @test U.table_interpolation(table_map_toml_loaded) == :bilinear
-        @test U.table_xgrid(table_map_toml_loaded) == U.table_xgrid(pm.pr_map)
-        @test U.table_ygrid(table_map_toml_loaded) == U.table_ygrid(pm.pr_map)
-        @test U.table_values(table_map_toml_loaded) == U.table_values(pm.pr_map)
+        @test U.table_xgrid(table_map_toml_loaded) == U.table_xgrid(pm.pressure_ratio_map)
+        @test U.table_ygrid(table_map_toml_loaded) == U.table_ygrid(pm.pressure_ratio_map)
+        @test U.table_values(table_map_toml_loaded) == U.table_values(pm.pressure_ratio_map)
 
         vals_ref = TM.performance_from_stagnation(pm_bicubic, 2.5, 15.0, 300.0, 100_000.0)
         compressor_map_toml_path = tempname() * ".toml"
         TM.write_toml(pm_bicubic, compressor_map_toml_path)
-        pm_toml_loaded = TM.read_toml(TM.TabulatedCompressorPerformanceMap, compressor_map_toml_path)
-        pm_generic_loaded = TM.read_performance_map_toml(compressor_map_toml_path; group="compressor_map")
-        @test pm_generic_loaded isa TM.TabulatedCompressorPerformanceMap
+        pm_toml_loaded = TM.read_toml(TM.TabulatedPerformanceMap, compressor_map_toml_path)
         vals_toml_loaded = TM.performance_from_stagnation(pm_toml_loaded, 2.5, 15.0, 300.0, 100_000.0)
-        @test isapprox(vals_toml_loaded.PR, vals_ref.PR; rtol=1e-12)
+        @test isapprox(vals_toml_loaded.pressure_ratio, vals_ref.pressure_ratio; rtol=1e-12)
         @test isapprox(vals_toml_loaded.eta, vals_ref.eta; rtol=1e-12)
 
-        pm_nd = TM.demo_nondimensional_tabulated_compressor_performance_map(; interpolation=:bicubic)
-        compressor_map_nd_toml_path = tempname() * ".toml"
-        TM.write_toml(pm_nd, compressor_map_nd_toml_path)
-        pm_nd_toml_loaded = TM.read_toml(TM.NonDimensionalTabulatedCompressorPerformanceMap, compressor_map_nd_toml_path)
-        pm_nd_generic_loaded = TM.read_performance_map_toml(compressor_map_nd_toml_path; group="compressor_map")
-        @test pm_nd_generic_loaded isa TM.NonDimensionalTabulatedCompressorPerformanceMap
-        vals_nd_ref = TM.performance_from_stagnation(pm_nd, 900.0, 12.0, 300.0, 101_325.0)
-        vals_nd_loaded = TM.performance_from_stagnation(pm_nd_toml_loaded, 900.0, 12.0, 300.0, 101_325.0)
-        @test isapprox(vals_nd_loaded.PR, vals_nd_ref.PR; rtol=1e-12)
-        @test isapprox(vals_nd_loaded.eta, vals_nd_ref.eta; rtol=1e-12)
-
-        meanline = TM.demo_compressor_meanline_model()
+        meanline = TTM.demo_axial_compressor_model()
         m_mid = 0.5 * (meanline.m_tip_bounds[1] + meanline.m_tip_bounds[2])
         phi_mid = 0.5 * (meanline.phi_in_bounds[1] + meanline.phi_in_bounds[2])
         radii = AM.meanline_radii(meanline)
@@ -472,15 +565,14 @@
         @test isfinite(meanline_vals_core.eta)
         @test isapprox(meanline_vals_core.PR, meanline_vals.PR; rtol=1e-12)
         @test isapprox(meanline_vals_core.eta, meanline_vals.eta; rtol=1e-12)
+        @test length(meanline_vals_core.station_data) == length(meanline.rows) + 1
+        @test length(meanline_vals_core.row_data) == length(meanline.rows)
+        @test meanline_vals_core.station_data[1].area ≈ AM.station_area(meanline, 1)
+        @test meanline_vals_core.row_data[1].row_annulus_area ≈ AM.row_annulus_area(meanline.rows[1])
+        @test meanline_vals_core.row_data[1].theta_metal_in == meanline.rows[1].theta_metal_in
+        @test meanline_vals_core.row_data[1].theta_metal_out == meanline.rows[1].theta_metal_out
 
-        nd_from_meanline = TM.tabulate_compressor_meanline_model_nd(
-            meanline;
-            n_speed=9,
-            n_flow=11,
-            interpolation=:bilinear,
-        )
-        @test nd_from_meanline isa TM.NonDimensionalTabulatedCompressorPerformanceMap
-        dim_from_meanline = TM.tabulate_compressor_meanline_model_dim(
+        dim_from_meanline = TTM.tabulate_compressor_meanline_model_dim(
             meanline;
             n_speed=9,
             n_flow=11,
@@ -490,74 +582,78 @@
             Tt_ref=300.0,
             Pt_ref=101_325.0,
         )
-        @test dim_from_meanline isa TM.TabulatedCompressorPerformanceMap
-        dim_grid_omega = collect(U.table_xgrid(dim_from_meanline.pr_map))
-        dim_grid_mdot_corr = collect(U.table_ygrid(dim_from_meanline.pr_map))
+        @test dim_from_meanline isa TTM.TabulatedPerformanceMap
+        dim_grid_omega = collect(TTM.tabulated_speed_grid(dim_from_meanline))
+        dim_grid_mdot_corr = collect(TTM.tabulated_flow_grid(dim_from_meanline))
         @test length(dim_grid_mdot_corr) == 11
         @test length(dim_grid_omega) >= 2
-        dim_from_nd = TM.to_tabulated_compressor_map(
-            nd_from_meanline;
-            Tt_in_ref=300.0,
-            Pt_in_ref=101_325.0,
-            Tt_ref=300.0,
-            Pt_ref=101_325.0,
-            omega_corr_grid=dim_grid_omega,
-            mdot_corr_grid=dim_grid_mdot_corr,
-            interpolation=:bilinear,
-        )
         i_mid = cld(length(dim_grid_omega), 2)
         j_mid = cld(length(dim_grid_mdot_corr), 2)
-        vals_dim_direct = TM.performance_from_stagnation(
+        vals_dim = TTM.performance_from_stagnation(
             dim_from_meanline,
-            dim_grid_omega[i_mid],
-            dim_grid_mdot_corr[j_mid],
+            TTM.physical_speed(dim_grid_omega[i_mid], 300.0, 300.0),
+            TTM.physical_flow(dim_grid_mdot_corr[j_mid], 300.0, 101_325.0, 300.0, 101_325.0),
             300.0,
             101_325.0,
         )
-        vals_dim_from_nd = TM.performance_from_stagnation(
-            dim_from_nd,
-            dim_grid_omega[i_mid],
-            dim_grid_mdot_corr[j_mid],
-            300.0,
-            101_325.0,
-        )
-        @test isapprox(vals_dim_direct.PR, vals_dim_from_nd.PR; rtol=1e-8)
-        @test isapprox(vals_dim_direct.eta, vals_dim_from_nd.eta; rtol=1e-8)
-        m_grid = U.table_xgrid(nd_from_meanline.pr_map)
-        phi_grid = U.table_ygrid(nd_from_meanline.pr_map)
-        m_sample = m_grid[4]
-        phi_sample = phi_grid[6]
-        r_tip_1 = meanline.r_tip_ref
-        r_mean_1 = abs(meanline.speed_ratio_ref) * meanline.r_flow_ref
+        r_tip = meanline.r_tip_ref
+        r_mean = abs(meanline.speed_ratio_ref) * meanline.r_flow_ref
         a0 = sqrt(meanline.gamma * meanline.gas_constant * 300.0)
         rho0 = 101_325.0 / (meanline.gas_constant * 300.0)
-        A_phys_1 = AM.station_area(meanline, 1)
-        omega_sample = m_sample * a0 / r_tip_1
-        mdot_sample = phi_sample * abs(omega_sample) * r_mean_1 * rho0 * A_phys_1
-        vals_direct = AM.streamtube_solve_with_phi(
+        A_in = AM.station_area(meanline, 1)
+        m_sample = dim_grid_omega[i_mid] * r_tip / a0
+        mdot_sample = dim_grid_mdot_corr[j_mid] # Tt_ref/Tt_in and Pt_ref/Pt_in are identical in this test
+        phi_sample = mdot_sample / (rho0 * A_in * abs(dim_grid_omega[i_mid]) * r_mean)
+        vals_streamtube = AM.streamtube_solve_with_phi(
             meanline,
             m_sample,
             phi_sample,
         )
-        vals_nd_table = TM.performance_from_stagnation(
-            nd_from_meanline,
-            omega_sample,
-            mdot_sample,
+        @test isapprox(vals_dim.pressure_ratio, vals_streamtube.PR; rtol=1e-8)
+        @test isapprox(vals_dim.eta, vals_streamtube.eta; rtol=1e-8)
+
+        shared_from_meanline = TP.Turbomachine.tabulate_axial_machine_model(
+            meanline;
+            n_speed=7,
+            n_flow=9,
+            interpolation=:bilinear,
+            Tt_in_ref=300.0,
+            Pt_in_ref=101_325.0,
+            Tt_ref=300.0,
+            Pt_ref=101_325.0,
+            boundary_resolution=101,
+        )
+        @test shared_from_meanline isa TP.Turbomachine.TabulatedPerformanceMap
+        shared_omega_grid = TP.Turbomachine.tabulated_speed_grid(shared_from_meanline)
+        shared_mdot_grid = TP.Turbomachine.tabulated_flow_grid(shared_from_meanline)
+        @test length(shared_omega_grid) >= 2
+        @test length(shared_mdot_grid) == 9
+        vals_shared = TP.Turbomachine.performance_from_stagnation(
+            shared_from_meanline,
+            shared_omega_grid[cld(length(shared_omega_grid), 2)],
+            shared_mdot_grid[cld(length(shared_mdot_grid), 2)],
             300.0,
             101_325.0,
         )
-        @test isapprox(vals_nd_table.PR, vals_direct.PR; rtol=1e-9)
-        @test isapprox(vals_nd_table.eta, vals_direct.eta; rtol=1e-9)
+        @test isfinite(vals_shared.pressure_ratio)
+        @test isfinite(vals_shared.eta)
+        shared_domain = TP.Turbomachine.performance_map_domain(
+            shared_from_meanline,
+            300.0,
+            101_325.0,
+        )
+        @test shared_domain.omega[1] > 0
+        @test shared_domain.omega[2] > shared_domain.omega[1]
 
         meanline_path = tempname() * ".toml"
-        TM.write_toml(meanline, meanline_path)
-        meanline_loaded = TM.read_toml(TM.CompressorMeanlineModel, meanline_path)
-        @test_throws ErrorException TM.read_performance_map_toml(meanline_path; group="compressor_meanline_model")
+        AM.write_toml(meanline, meanline_path)
+        meanline_loaded = AM.read_toml(TTM.AxialModel, meanline_path)
+        @test_throws ErrorException TM.read_toml(TM.TabulatedPerformanceMap, meanline_path; group="axial_model")
         meanline_vals_loaded = AM.streamtube_solve_with_phi(meanline_loaded, m_mid, phi_mid)
         @test isapprox(meanline_vals_loaded.PR, meanline_vals.PR; rtol=1e-12)
         @test isapprox(meanline_vals_loaded.eta, meanline_vals.eta; rtol=1e-12)
 
-        meanline_turbine = TM.demo_turbine_meanline_model()
+        meanline_turbine = TTM.demo_axial_turbine_model()
         m_mid_t = 0.5 * (meanline_turbine.m_tip_bounds[1] + meanline_turbine.m_tip_bounds[2])
         phi_mid_t = 0.5 * (meanline_turbine.phi_in_bounds[1] + meanline_turbine.phi_in_bounds[2])
         vals_turbine = AM.streamtube_solve_with_phi(meanline_turbine, m_mid_t, phi_mid_t)
@@ -565,21 +661,25 @@
         @test hasproperty(vals_turbine, :PR)
         @test hasproperty(vals_turbine, :eta)
 
-        turbine_map = TT.TabulatedTurbinePerformanceMap(
-            300.0,
-            100_000.0,
-            [1.0, 2.0],
-            [2.0, 3.0],
-            [10.0 10.0; 10.0 10.0],
-            [0.8 0.8; 0.8 0.8];
-            interpolation=:bilinear,
+        turbine_map = TM.demo_tabulated_performance_map_turbine(; interpolation=:bilinear)
+        vals_t_ref = TM.performance_from_stagnation(
+            turbine_map,
+            TM.physical_speed(0.8, turbine_map.Tt_ref, turbine_map.Tt_ref),
+            TM.physical_flow(1.8, turbine_map.Tt_ref, turbine_map.Pt_ref, turbine_map.Tt_ref, turbine_map.Pt_ref),
+            turbine_map.Tt_ref,
+            turbine_map.Pt_ref,
         )
-        vals_t_ref = TT.turbine_performance_map(turbine_map, 1.5, 2.5)
         turbine_map_toml_path = tempname() * ".toml"
-        TT.write_toml(turbine_map, turbine_map_toml_path)
-        turbine_map_toml_loaded = TT.read_toml(TT.TabulatedTurbinePerformanceMap, turbine_map_toml_path)
-        vals_t_toml_loaded = TT.turbine_performance_map(turbine_map_toml_loaded, 1.5, 2.5)
-        @test isapprox(vals_t_toml_loaded.mdot_corr, vals_t_ref.mdot_corr; rtol=1e-12)
+        TM.write_toml(turbine_map, turbine_map_toml_path)
+        turbine_map_toml_loaded = TM.read_toml(TM.TabulatedPerformanceMap, turbine_map_toml_path)
+        vals_t_toml_loaded = TM.performance_from_stagnation(
+            turbine_map_toml_loaded,
+            TM.physical_speed(0.8, turbine_map.Tt_ref, turbine_map.Tt_ref),
+            TM.physical_flow(1.8, turbine_map.Tt_ref, turbine_map.Pt_ref, turbine_map.Tt_ref, turbine_map.Pt_ref),
+            turbine_map.Tt_ref,
+            turbine_map.Pt_ref,
+        )
+        @test isapprox(vals_t_toml_loaded.pressure_ratio, vals_t_ref.pressure_ratio; rtol=1e-12)
         @test isapprox(vals_t_toml_loaded.eta, vals_t_ref.eta; rtol=1e-12)
     end
 end

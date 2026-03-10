@@ -51,7 +51,7 @@ Returns `(R_pout, R_dh_eff, R_P)`:
 - `R_P = tau * omega - mdot * (ht_out - ht_in)`
 """
 function compressor_residuals(
-    compressor_map::AbstractCompressorPerformanceMap,
+    compressor_map::TabulatedPerformanceMap,
     eos::Fluids.AbstractEOS,
     pt_in::Real,
     ht_in::Real,
@@ -69,7 +69,7 @@ function compressor_residuals(
         Tt_in,
         pt_in,
     )
-    PR = map_vals.PR
+    PR = map_vals.pressure_ratio
     eta = map_vals.eta
     _primal_value(eta) > 0 || error("map eta must be > 0")
 
@@ -85,7 +85,7 @@ end
 Compute scaled compressor residuals.
 """
 function compressor_residuals_scaled(
-    compressor_map::AbstractCompressorPerformanceMap,
+    compressor_map::TabulatedPerformanceMap,
     eos::Fluids.AbstractEOS,
     pt_in::Real,
     ht_in::Real,

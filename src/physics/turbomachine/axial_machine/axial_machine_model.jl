@@ -6,6 +6,8 @@ Field meanings:
   inlet flow state to turning/loss outputs.
 - `r_hub`: hub radius [m] of the annulus represented by this row.
 - `r_tip`: tip radius [m] for this row.
+- `theta_metal_in`: blade metal inlet angle [rad] used to define incidence.
+- `theta_metal_out`: blade metal exit angle [rad] used to define deviation.
 - `speed_ratio_to_ref`: row shaft speed divided by the reference shaft speed
   (`omega_row / omega_ref`). Use `0.0` for stators, negative values for
   counter-rotation, and values with magnitude > 1 for geared-up rows.
@@ -14,6 +16,8 @@ struct AxialRow
     aero::BladeAeroModel
     r_hub::Float64
     r_tip::Float64
+    theta_metal_in::Float64
+    theta_metal_out::Float64
     speed_ratio_to_ref::Float64
 end
 
@@ -21,6 +25,8 @@ function AxialRow(
     aero::BladeAeroModel,
     r_hub::Real,
     r_tip::Real,
+    theta_metal_in::Real,
+    theta_metal_out::Real,
     speed_ratio_to_ref::Real,
 )
     r_hub >= 0 || error("row r_hub must be >= 0")
@@ -31,6 +37,8 @@ function AxialRow(
         aero,
         Float64(r_hub),
         Float64(r_tip),
+        Float64(theta_metal_in),
+        Float64(theta_metal_out),
         speed_ratio,
     )
 end

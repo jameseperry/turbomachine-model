@@ -6,16 +6,20 @@ export LinearMap
 export interpolation_map
 export bilinear_evaluate, bicubic_evaluate, table_evaluate
 export linear_evaluate
+export resample_linear
 export table_xgrid, table_ygrid, table_values, table_interpolation
 export bracket_bisect_roots, feasibility_backoff
 export track_branches
+export OperatingPointSolveOptions, solve_operating_point_generic
 export write_toml, read_toml
 
 include("bilinear_map.jl")
 include("bicubic_map.jl")
 include("linear_map.jl")
+include("resampling.jl")
 include("root_finding.jl")
 include("branch_tracking.jl")
+include("operating_point_solver.jl")
 include("toml_io.jl")
 
 table_xgrid(map::AbstractTableMap) = error("table_xgrid not implemented for $(typeof(map))")

@@ -1,19 +1,41 @@
 module Turbomachine
 
-abstract type AbstractCompressorPerformanceMap end
-
-include("nondimensional_performance_map.jl")
+include("tabulated_performance_map.jl")
+include("operating_point_sweep.jl")
 include("axial_machine/AxialMachine.jl")
-include("compressor/Compressor.jl")
-include("turbine/Turbine.jl")
+include("compressor_residuals.jl")
+include("turbine_residuals.jl")
+include("operating_point.jl")
+include("meanline_model.jl")
 
 import .AxialMachine
-import .Compressor
-import .Turbine
 
-export NondimensionalPerformanceMap
+export TabulatedPerformanceMap
+export demo_tabulated_performance_map_compressor
+export demo_tabulated_performance_map_turbine
+export performance_from_stagnation
+export performance_map_domain
+export solve_operating_point
+export replay_operating_point_with_streamtube
+export diagnose_axial_operating_point
+export solve_operating_sweep
+export select_operating_point_branch
+export compressor_residuals
+export compressor_residuals_scaled
+export compressor_residual_scales
+export turbine_residuals
+export turbine_residuals_scaled
+export turbine_residual_scales
+export AxialModel
+export AxialMeanlineModel
+export CompressorMeanlineModel
+export TurbineMeanlineModel
+export demo_axial_compressor_model
+export demo_axial_turbine_model
+export tabulate_axial_machine_model
+export tabulate_axial_machine_model_dim
+export tabulate_compressor_meanline_model_dim
+export tabulate_turbine_meanline_model
 export AxialMachine
-export Compressor
-export Turbine
 
 end # module Turbomachine

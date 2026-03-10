@@ -4,8 +4,8 @@ import ....Utility: write_toml, read_toml
 function _aero_to_toml_dict(model::BladeAeroModel)
     return Dict{String,Any}(
         "format" => "blade_aero_model",
-        "theta_ref" => Float64(model.theta_ref),
-        "theta_incidence_sensitivity" => Float64(model.theta_incidence_sensitivity),
+        "deviation_ref" => Float64(model.deviation_ref),
+        "deviation_incidence_sensitivity" => Float64(model.deviation_incidence_sensitivity),
         "loss_base" => Float64(model.loss_base),
         "loss_incidence" => Float64(model.loss_incidence),
         "stall_incidence_limit" => Float64(model.stall_incidence_limit),
@@ -19,8 +19,8 @@ function _aero_from_toml_dict(data::Dict{String,Any})
     fmt = String(data["format"])
     if fmt == "blade_aero_model"
         return BladeAeroModel{Float64}(
-            Float64(data["theta_ref"]),
-            Float64(data["theta_incidence_sensitivity"]),
+            Float64(data["deviation_ref"]),
+            Float64(data["deviation_incidence_sensitivity"]),
             Float64(data["loss_base"]),
             Float64(data["loss_incidence"]),
             Float64(data["stall_incidence_limit"]),
@@ -35,6 +35,8 @@ function _row_to_toml_dict(row::AxialRow)
     return Dict{String,Any}(
         "r_hub" => row.r_hub,
         "r_tip" => row.r_tip,
+        "theta_metal_in" => row.theta_metal_in,
+        "theta_metal_out" => row.theta_metal_out,
         "speed_ratio_to_ref" => row.speed_ratio_to_ref,
         "aero" => _aero_to_toml_dict(row.aero),
     )
@@ -43,6 +45,8 @@ end
 function _row_from_toml_dict(data::Dict{String,Any})
     haskey(data, "r_hub") || error("row missing r_hub")
     haskey(data, "r_tip") || error("row missing r_tip")
+    haskey(data, "theta_metal_in") || error("row missing theta_metal_in")
+    haskey(data, "theta_metal_out") || error("row missing theta_metal_out")
     haskey(data, "speed_ratio_to_ref") || error("row missing speed_ratio_to_ref")
     haskey(data, "aero") || error("row missing aero")
     aero = _aero_from_toml_dict(data["aero"])
@@ -50,6 +54,8 @@ function _row_from_toml_dict(data::Dict{String,Any})
         aero,
         Float64(data["r_hub"]),
         Float64(data["r_tip"]),
+        Float64(data["theta_metal_in"]),
+        Float64(data["theta_metal_out"]),
         Float64(data["speed_ratio_to_ref"]),
     )
 end
@@ -83,12 +89,12 @@ end
 function write_toml(
     model::AxialMachineModel,
     path::AbstractString;
-    group::AbstractString="compressor_meanline_model",
+    group::AbstractString="axial_model",
 )
     data = Dict{String,Any}()
     node = _find_or_create_axial_group!(data, group)
-    node["format"] = "compressor_meanline_model"
-    node["format_version"] = 5
+    node["format"] = "axial_model"
+    node["format_version"] = 6
     node["gamma"] = model.gamma
     node["gas_constant"] = model.gas_constant
     node["r_tip_ref"] = model.r_tip_ref
@@ -106,7 +112,7 @@ end
 function read_toml(
     ::Type{AxialMachineModel},
     path::AbstractString;
-    group::AbstractString="compressor_meanline_model",
+    group::AbstractString="axial_model",
 )
     data = TOML.parsefile(path)
     node = _find_axial_group(data, group)
@@ -133,8 +139,8 @@ function demo_axial_compressor_model()
     rows = AxialRow[
         AxialRow(
             rotor_aero_model(
-                theta_ref=-0.55,
-                theta_incidence_sensitivity=0.62,
+                deviation_ref=0.0,
+                deviation_incidence_sensitivity=0.62,
                 loss_base=0.0025,
                 loss_incidence=0.045,
                 stall_incidence_limit=0.36,
@@ -143,12 +149,14 @@ function demo_axial_compressor_model()
             ),
             0.140,
             0.220,
+            -0.55,
+            -0.55,
             1.0,
         ),
         AxialRow(
             stator_aero_model(
-                theta_ref=0.45,
-                theta_incidence_sensitivity=0.70,
+                deviation_ref=0.0,
+                deviation_incidence_sensitivity=0.70,
                 loss_base=0.0018,
                 loss_incidence=0.030,
                 stall_incidence_limit=0.34,
@@ -157,12 +165,14 @@ function demo_axial_compressor_model()
             ),
             0.140,
             0.220,
+            0.45,
+            0.45,
             0.0,
         ),
         AxialRow(
             rotor_aero_model(
-                theta_ref=-0.50,
-                theta_incidence_sensitivity=0.60,
+                deviation_ref=0.0,
+                deviation_incidence_sensitivity=0.60,
                 loss_base=0.0030,
                 loss_incidence=0.050,
                 stall_incidence_limit=0.34,
@@ -171,12 +181,14 @@ function demo_axial_compressor_model()
             ),
             0.140,
             0.220,
+            -0.50,
+            -0.50,
             1.0,
         ),
         AxialRow(
             stator_aero_model(
-                theta_ref=0.45,
-                theta_incidence_sensitivity=0.70,
+                deviation_ref=0.0,
+                deviation_incidence_sensitivity=0.70,
                 loss_base=0.0020,
                 loss_incidence=0.032,
                 stall_incidence_limit=0.34,
@@ -185,6 +197,8 @@ function demo_axial_compressor_model()
             ),
             0.140,
             0.220,
+            0.45,
+            0.45,
             0.0,
         ),
     ]
@@ -201,39 +215,43 @@ end
 """
 Demo axial-machine model configured to behave turbine-like for development/testing.
 
-This model is still serialized using the same `compressor_meanline_model` schema as
-the compressor demo; only the aero row parameters differ.
+This model is serialized using the common `axial_model` schema; only the aero
+row parameters differ from the compressor demo.
 """
 function demo_axial_turbine_model()
     rows = AxialRow[
         # Simplified single-stage turbine-like setup: one guide vane and one rotor.
         AxialRow(
             stator_aero_model(
-                theta_ref=-0.55,
-                theta_incidence_sensitivity=0.35,
+                deviation_ref=0.0,
+                deviation_incidence_sensitivity=0.45,
                 loss_base=0.0010,
                 loss_incidence=0.010,
                 stall_incidence_limit=0.55,
-                k_theta_min=-1.8,
-                k_theta_max=0.5,
+                k_theta_min=0.1,
+                k_theta_max=2.2,
             ),
             0.140,
             0.220,
+            0.0,
+            deg2rad(70.0),
             0.0,
         ),
         # Rotor row tuned for smoother work extraction over a narrower domain.
         AxialRow(
             rotor_aero_model(
-                theta_ref=0.60,
-                theta_incidence_sensitivity=0.35,
+                deviation_ref=0.0,
+                deviation_incidence_sensitivity=0.55,
                 loss_base=0.0012,
                 loss_incidence=0.012,
                 stall_incidence_limit=0.55,
-                k_theta_min=-0.5,
-                k_theta_max=1.8,
+                k_theta_min=-3.0,
+                k_theta_max=-0.6,
             ),
             0.140,
             0.220,
+            deg2rad(40.0),
+            deg2rad(-50.0),
             1.0,
         ),
     ]
