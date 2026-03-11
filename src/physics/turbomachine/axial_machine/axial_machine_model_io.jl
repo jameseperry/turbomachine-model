@@ -172,17 +172,17 @@ function demo_axial_compressor_model()
         AxialRow(
             rotor_aero_model(
                 deviation_ref=0.0,
-                deviation_incidence_sensitivity=0.60,
-                loss_entropy_base=3.0,
-                loss_entropy_incidence=50.0,
+                deviation_incidence_sensitivity=0.45,
+                loss_entropy_base=2.4,
+                loss_entropy_incidence=36.0,
                 stall_incidence_limit=0.34,
-                theta_min=atan(-2.1),
+                theta_min=atan(-1.5),
                 theta_max=atan(1.1),
             ),
             0.140,
             0.220,
-            -0.50,
-            -0.50,
+            -0.40,
+            -0.30,
             1.0,
         ),
         AxialRow(
