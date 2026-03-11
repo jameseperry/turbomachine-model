@@ -8,9 +8,9 @@ SWEEP_N_PT_IN ?= 100
 DIAG_PT_IN ?= 101325
 DIAG_TT_IN ?= 288.15
 COMPRESSOR_DIAG_OMEGA ?= 800
-COMPRESSOR_DIAG_MDOT ?= 16
+COMPRESSOR_DIAG_VX ?= 162.13971511925172
 TURBINE_DIAG_OMEGA ?= 600
-TURBINE_DIAG_MDOT ?= 8
+TURBINE_DIAG_VX ?= 73.90934036321465
 
 USER_AXIAL_TOMLS  := $(wildcard axial/*/*.toml)
 USER_MAP_TOMLS := $(wildcard map/*/*.toml)
@@ -53,7 +53,7 @@ axial/compressor/%.operating_point.low.txt: axial/compressor/%.toml
 		--pt-in $(DIAG_PT_IN) \
 		--tt-in $(DIAG_TT_IN) \
 		--omega $(COMPRESSOR_DIAG_OMEGA) \
-		--mdot $(COMPRESSOR_DIAG_MDOT) \
+		--vx-inlet $(COMPRESSOR_DIAG_VX) \
 		--prefer-root low \
 		--output $@
 
@@ -63,7 +63,7 @@ axial/compressor/%.operating_point.high.txt: axial/compressor/%.toml
 		--pt-in $(DIAG_PT_IN) \
 		--tt-in $(DIAG_TT_IN) \
 		--omega $(COMPRESSOR_DIAG_OMEGA) \
-		--mdot $(COMPRESSOR_DIAG_MDOT) \
+		--vx-inlet $(COMPRESSOR_DIAG_VX) \
 		--prefer-root high \
 		--output $@
 
@@ -73,7 +73,7 @@ axial/turbine/%.operating_point.low.txt: axial/turbine/%.toml
 		--pt-in $(DIAG_PT_IN) \
 		--tt-in $(DIAG_TT_IN) \
 		--omega $(TURBINE_DIAG_OMEGA) \
-		--mdot $(TURBINE_DIAG_MDOT) \
+		--vx-inlet $(TURBINE_DIAG_VX) \
 		--prefer-root low \
 		--output $@
 
@@ -83,7 +83,7 @@ axial/turbine/%.operating_point.high.txt: axial/turbine/%.toml
 		--pt-in $(DIAG_PT_IN) \
 		--tt-in $(DIAG_TT_IN) \
 		--omega $(TURBINE_DIAG_OMEGA) \
-		--mdot $(TURBINE_DIAG_MDOT) \
+		--vx-inlet $(TURBINE_DIAG_VX) \
 		--prefer-root high \
 		--output $@
 
