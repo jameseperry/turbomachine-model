@@ -364,7 +364,7 @@
             axial_map.Tt_ref,
         )
         mdot_diag = TP.Turbomachine.physical_flow(
-            TP.Turbomachine.tabulated_flow_grid(axial_map)[4],
+            TP.Turbomachine.tabulated_flow_grid(axial_map)[3],
             axial_map.Tt_ref,
             axial_map.Pt_ref,
             axial_map.Tt_ref,
@@ -401,11 +401,9 @@
             ht_in=P.enthalpy_from_temperature(eos, axial_map.Tt_ref),
             omega=omega_diag,
         )
-        @test length(replay.nondimensional.station_data) == length(axial_model.rows) + 1
-        @test length(replay.nondimensional.row_data) == length(axial_model.rows)
         @test length(replay.physical.station_data) == length(axial_model.rows) + 1
         @test length(replay.physical.row_data) == length(axial_model.rows)
-        @test haskey(replay.physical.station_data[1], :pt)
+        @test haskey(replay.physical.station_data[1], :pt_t)
         @test haskey(replay.physical.row_data[1], :alpha_in)
         @test haskey(replay.physical.row_data[1], :W_in)
         @test haskey(replay.physical.row_data[1], :omega_row)
@@ -540,8 +538,28 @@
 
         meanline = TTM.demo_axial_compressor_model()
         m_mid = 0.5 * (meanline.m_tip_bounds[1] + meanline.m_tip_bounds[2])
-        phi_mid = 0.5 * (meanline.phi_in_bounds[1] + meanline.phi_in_bounds[2])
+        Vx_mid = 0.5 * (meanline.Vx_bounds[1] + meanline.Vx_bounds[2])
         radii = AM.meanline_radii(meanline)
+        eos_axial = P.IdealGasEOS(:axial; gas_constant=meanline.gas_constant, gamma=meanline.gamma)
+        Tt_ref = 300.0
+        Pt_ref = 101_325.0
+        ht_ref = P.enthalpy_from_temperature(eos_axial, Tt_ref)
+        a0 = P.speed_of_sound(eos_axial, Pt_ref, ht_ref)
+        omega_mid = m_mid * a0 / meanline.r_tip_ref
+        inlet_Vx(model, eos, pt_in, ht_in, mdot, Vtheta_inlet) = begin
+            inlet = AM._solve_station_Vx(
+                eos,
+                mdot,
+                pt_in,
+                ht_in,
+                P.entropy(eos, pt_in, ht_in),
+                AM.station_area(model, 1),
+                Vtheta_inlet;
+                prefer=:low,
+            )
+            @test inlet.converged
+            inlet.Vx
+        end
         @test length(radii) == length(meanline.rows)
         for (r, row) in zip(radii, meanline.rows)
             @test isapprox(r, 0.5 * (row.r_hub + row.r_tip); rtol=0, atol=1e-12)
@@ -555,12 +573,28 @@
             )
             @test AM.station_area(meanline, 2) ≈ expected_a2
         end
-        meanline_vals = AM.streamtube_solve_with_phi(meanline, m_mid, phi_mid)
+        meanline_vals = AM.streamtube_solve(
+            meanline,
+            eos_axial,
+            radii,
+            Pt_ref,
+            ht_ref,
+            omega_mid,
+            Vx_mid,
+            0.0,
+        )
         @test isfinite(meanline_vals.PR)
         @test isfinite(meanline_vals.eta)
-        nu_u_ref = meanline.speed_ratio_ref * m_mid * meanline.r_flow_ref / meanline.r_tip_ref
-        nu_x_mid = phi_mid * abs(nu_u_ref)
-        meanline_vals_core = AM.streamtube_solve(meanline, radii, m_mid, nu_x_mid, 0.0)
+        meanline_vals_core = AM.streamtube_solve(
+            meanline,
+            eos_axial,
+            radii,
+            Pt_ref,
+            ht_ref,
+            omega_mid,
+            Vx_mid,
+            0.0,
+        )
         @test isfinite(meanline_vals_core.PR)
         @test isfinite(meanline_vals_core.eta)
         @test isapprox(meanline_vals_core.PR, meanline_vals.PR; rtol=1e-12)
@@ -581,6 +615,7 @@
             Pt_in_ref=101_325.0,
             Tt_ref=300.0,
             Pt_ref=101_325.0,
+            eos=eos_axial,
         )
         @test dim_from_meanline isa TTM.TabulatedPerformanceMap
         dim_grid_omega = collect(TTM.tabulated_speed_grid(dim_from_meanline))
@@ -596,24 +631,25 @@
             300.0,
             101_325.0,
         )
-        r_tip = meanline.r_tip_ref
-        r_mean = abs(meanline.speed_ratio_ref) * meanline.r_flow_ref
-        a0 = sqrt(meanline.gamma * meanline.gas_constant * 300.0)
-        rho0 = 101_325.0 / (meanline.gas_constant * 300.0)
-        A_in = AM.station_area(meanline, 1)
-        m_sample = dim_grid_omega[i_mid] * r_tip / a0
-        mdot_sample = dim_grid_mdot_corr[j_mid] # Tt_ref/Tt_in and Pt_ref/Pt_in are identical in this test
-        phi_sample = mdot_sample / (rho0 * A_in * abs(dim_grid_omega[i_mid]) * r_mean)
-        vals_streamtube = AM.streamtube_solve_with_phi(
+        omega_sample = TTM.physical_speed(dim_grid_omega[i_mid], 300.0, 300.0)
+        mdot_sample = TTM.physical_flow(dim_grid_mdot_corr[j_mid], 300.0, 101_325.0, 300.0, 101_325.0)
+        Vx_sample = inlet_Vx(meanline, eos_axial, 101_325.0, ht_ref, mdot_sample, 0.0)
+        vals_streamtube = AM.streamtube_solve(
             meanline,
-            m_sample,
-            phi_sample,
+            eos_axial,
+            radii,
+            101_325.0,
+            ht_ref,
+            omega_sample,
+            Vx_sample,
+            0.0,
         )
         @test isapprox(vals_dim.pressure_ratio, vals_streamtube.PR; rtol=1e-8)
         @test isapprox(vals_dim.eta, vals_streamtube.eta; rtol=1e-8)
 
         shared_from_meanline = TP.Turbomachine.tabulate_axial_machine_model(
             meanline;
+            eos=eos_axial,
             n_speed=7,
             n_flow=9,
             interpolation=:bilinear,
@@ -649,14 +685,37 @@
         AM.write_toml(meanline, meanline_path)
         meanline_loaded = AM.read_toml(TTM.AxialModel, meanline_path)
         @test_throws ErrorException TM.read_toml(TM.TabulatedPerformanceMap, meanline_path; group="axial_model")
-        meanline_vals_loaded = AM.streamtube_solve_with_phi(meanline_loaded, m_mid, phi_mid)
+        Vx_mid_loaded = 0.5 * (meanline_loaded.Vx_bounds[1] + meanline_loaded.Vx_bounds[2])
+        meanline_vals_loaded = AM.streamtube_solve(
+            meanline_loaded,
+            eos_axial,
+            radii,
+            Pt_ref,
+            ht_ref,
+            omega_mid,
+            Vx_mid_loaded,
+            0.0,
+        )
         @test isapprox(meanline_vals_loaded.PR, meanline_vals.PR; rtol=1e-12)
         @test isapprox(meanline_vals_loaded.eta, meanline_vals.eta; rtol=1e-12)
 
         meanline_turbine = TTM.demo_axial_turbine_model()
         m_mid_t = 0.5 * (meanline_turbine.m_tip_bounds[1] + meanline_turbine.m_tip_bounds[2])
-        phi_mid_t = 0.5 * (meanline_turbine.phi_in_bounds[1] + meanline_turbine.phi_in_bounds[2])
-        vals_turbine = AM.streamtube_solve_with_phi(meanline_turbine, m_mid_t, phi_mid_t)
+        Vx_mid_t = 0.5 * (meanline_turbine.Vx_bounds[1] + meanline_turbine.Vx_bounds[2])
+        eos_turbine = P.IdealGasEOS(:axial; gas_constant=meanline_turbine.gas_constant, gamma=meanline_turbine.gamma)
+        ht_ref_t = P.enthalpy_from_temperature(eos_turbine, Tt_ref)
+        a0_t = P.speed_of_sound(eos_turbine, Pt_ref, ht_ref_t)
+        omega_mid_t = m_mid_t * a0_t / meanline_turbine.r_tip_ref
+        vals_turbine = AM.streamtube_solve(
+            meanline_turbine,
+            eos_turbine,
+            AM.meanline_radii(meanline_turbine),
+            Pt_ref,
+            ht_ref_t,
+            omega_mid_t,
+            Vx_mid_t,
+            0.0,
+        )
         @test hasproperty(vals_turbine, :valid)
         @test hasproperty(vals_turbine, :PR)
         @test hasproperty(vals_turbine, :eta)

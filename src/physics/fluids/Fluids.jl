@@ -15,7 +15,7 @@ export density_from_pressure_temperature, density_from_pressure_enthalpy
 export speed_of_sound_from_temperature, speed_of_sound_from_enthalpy
 export temperature, entropy, density, speed_of_sound
 export heat_capacity_cp, dynamic_viscosity, thermal_conductivity
-export phase, enthalpy_from_pressure_entropy, isentropic_enthalpy
+export phase, enthalpy_from_pressure_entropy, pressure_from_enthalpy_entropy, isentropic_enthalpy
 export static_temperature_from_total, total_temperature_from_static
 export static_pressure_from_total, total_pressure_from_static
 export static_enthalpy_from_total, total_enthalpy_from_static

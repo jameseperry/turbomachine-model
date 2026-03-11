@@ -1,16 +1,19 @@
 """
-    feasible_flow_limits(model, speed_grid, flow_lo, flow_hi; boundary_resolution=401, streamtube_radii=meanline_radii(model), nu_theta_inlet=0.0, prefer_root=:low, is_feasible)
+    feasible_flow_limits(model, eos, speed_grid, flow_lo, flow_hi; pt_in, ht_in, boundary_resolution=401, streamtube_radii=meanline_radii(model), Vtheta_inlet=0.0, prefer_root=:low, is_feasible)
 
-Scan inlet flow coefficient at each speed and return feasible-flow bounds.
+Scan physical inlet mass flow at each physical shaft speed and return feasible-flow bounds.
 """
 function feasible_flow_limits(
     model::AxialMachineModel,
+    eos::Fluids.AbstractEOS,
     speed_grid::AbstractVector{<:Real},
     flow_lo::Real,
     flow_hi::Real;
+    pt_in::Real,
+    ht_in::Real,
     boundary_resolution::Int=401,
     streamtube_radii::AbstractVector{<:Real}=meanline_radii(model),
-    nu_theta_inlet::Real=0.0,
+    Vtheta_inlet::Real=0.0,
     prefer_root::Symbol=:low,
     is_feasible::Function=(result -> getproperty(result, :valid)),
 )
@@ -25,17 +28,17 @@ function feasible_flow_limits(
 
     for (i, speed_raw) in pairs(speed_grid)
         speed = Float64(speed_raw)
-        nu_u_ref = model.speed_ratio_ref * speed * model.r_flow_ref / model.r_tip_ref
-        abs(nu_u_ref) > 0 || continue
         feasible_flows = Float64[]
         for flow in flow_probe
-            nu_x_inlet = flow * abs(nu_u_ref)
-            result = streamtube_solve(
+            result = streamtube_solve_from_mdot(
                 model,
+                eos,
                 streamtube_radii,
+                Float64(pt_in),
+                Float64(ht_in),
                 speed,
-                nu_x_inlet,
-                Float64(nu_theta_inlet);
+                flow,
+                Float64(Vtheta_inlet);
                 prefer_root=prefer_root,
             )
             if is_feasible(result)

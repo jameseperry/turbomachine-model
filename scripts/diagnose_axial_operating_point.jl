@@ -51,8 +51,8 @@ function _build_parser()
             help = "mass flow [kg/s]"
             arg_type = Float64
             required = true
-        "--nu-theta-inlet"
-            help = "inlet non-dimensional swirl velocity"
+        "--vtheta-inlet"
+            help = "inlet tangential velocity [m/s]"
             arg_type = Float64
             default = 0.0
         "--prefer-root"
@@ -144,7 +144,7 @@ function _main(args::Vector{String}=ARGS)
         ht_in=ht_in,
         omega=omega,
         mdot=mdot,
-        nu_theta_inlet=Float64(parsed["nu-theta-inlet"]),
+        Vtheta_inlet=Float64(parsed["vtheta-inlet"]),
         prefer_root=prefer_root,
     )
 
@@ -162,25 +162,9 @@ function _main(args::Vector{String}=ARGS)
 
         _print_table(
         io,
-        "Station Diagnostics (Non-dimensional)",
-        diagnostics.nondimensional.station_data,
-        [:station_index, :radius, :area, :tau, :pi, :nu_x, :nu_theta],
-        )
-        _print_table(
-        io,
         "Station Diagnostics (Physical)",
         diagnostics.physical.station_data,
-        [:station_index, :radius, :area, :Tt, :pt, :T, :p, :rho, :ht, :h, :Vx, :Vtheta, :V, :Mach, :mdot_station, :mdot_error],
-        )
-        nd_row_display = _convert_angle_columns(
-            diagnostics.nondimensional.row_data,
-            [:theta_metal_in, :theta_metal_out, :incidence, :deviation, :theta_in, :theta_out],
-        )
-        _print_table(
-        io,
-        "Row Diagnostics (Non-dimensional)",
-        nd_row_display,
-        [:row_index, :row_radius, :row_annulus_area, :theta_metal_in_deg, :theta_metal_out_deg, :nu_u, :nu_x_in, :nu_x_out, :nu_theta_in, :nu_theta_out, :tau_in, :tau_out, :pi_in, :pi_out, :incidence_deg, :deviation_deg, :theta_in_deg, :theta_out_deg, :stall_margin, :valid, :stall, :choke],
+        [:station_index, :radius, :area, :Tt, :pt_t, :T, :p, :rho, :ht_t, :h, :Vx, :Vtheta, :V, :Mach, :mdot_station, :mdot_error],
         )
         phys_row_display = _convert_angle_columns(
             diagnostics.physical.row_data,
@@ -190,7 +174,7 @@ function _main(args::Vector{String}=ARGS)
         io,
         "Row Diagnostics (Physical)",
         phys_row_display,
-        [:row_index, :r_hub, :r_tip, :row_radius, :omega_row, :U, :incidence_deg, :deviation_deg, :theta_metal_in_deg, :theta_metal_out_deg, :alpha_in_deg, :alpha_out_deg, :beta_in_deg, :beta_out_deg, :Vx_in, :Vx_out, :Vtheta_in, :Vtheta_out, :W_in, :W_out, :WMach_in, :WMach_out, :ht_in, :ht_out, :delta_ht, :h_in, :h_out, :delta_h, :euler_work, :energy_balance_error, :psi_row, :thermo_efficiency, :pt_ratio_row, :Tt_ratio_row, :p_ratio_row, :stator_loss_coefficient, :pt_in, :pt_out, :Tt_in, :Tt_out, :Mach_in, :Mach_out, :valid, :stall, :choke],
+        [:row_index, :r_hub, :r_tip, :row_radius, :omega_row, :U, :incidence_deg, :deviation_deg, :theta_metal_in_deg, :theta_metal_out_deg, :alpha_in_deg, :alpha_out_deg, :beta_in_deg, :beta_out_deg, :Vx_in, :Vx_out, :Vtheta_in, :Vtheta_out, :W_in, :W_out, :WMach_in, :WMach_out, :ht_t_in, :ht_t_out, :delta_ht, :h_in, :h_out, :delta_h, :euler_work, :energy_balance_error, :psi_row, :thermo_efficiency, :pt_t_ratio, :Tt_ratio, :p_ratio_row, :stator_loss_coefficient, :pt_t_in, :pt_t_out, :p_in, :p_out, :Mach_in, :Mach_out, :valid, :stall, :choke],
         )
     finally
         io === stdout || close(io)

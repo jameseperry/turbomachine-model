@@ -54,7 +54,7 @@ function _build_parser()
             arg_type = Int
             default = 41
         "--boundary-resolution"
-            help = "phi probe count per speed line for feasible-flow boundary detection"
+            help = "mass-flow probe count per speed line for feasible-flow boundary detection"
             arg_type = Int
             default = 401
         "--Tt-in-ref"
@@ -71,11 +71,8 @@ function _build_parser()
         "--Pt-ref"
             help = "internal corrected-speed / corrected-flow reference Pt [Pa]"
             arg_type = Float64
-        "--omega-ref-for-phi"
-            help = "reference physical omega [rad/s] used to derive the default corrected-flow grid"
-            arg_type = Float64
-        "--nu-theta-inlet"
-            help = "inlet swirl velocity ratio for streamtube sampling"
+        "--vtheta-inlet"
+            help = "inlet tangential velocity for streamtube sampling [m/s]"
             arg_type = Float64
             default = 0.0
         "--prefer-root"
@@ -103,8 +100,6 @@ function _main(args::Vector{String}=ARGS)
     Pt_ref_opt = _parsed_opt(parsed, "Pt_ref", "Pt-ref")
     Tt_ref = isnothing(Tt_ref_opt) ? Tt_in_ref : Tt_ref_opt
     Pt_ref = isnothing(Pt_ref_opt) ? Pt_in_ref : Pt_ref_opt
-    omega_ref_for_phi = _parsed_opt(parsed, "omega_ref_for_phi", "omega-ref-for-phi")
-
     meanline_model = AxialMachine.read_toml(
         TM.AxialModel,
         input_path;
@@ -119,10 +114,9 @@ function _main(args::Vector{String}=ARGS)
         Pt_in_ref=Pt_in_ref,
         Tt_ref=Tt_ref,
         Pt_ref=Pt_ref,
-        omega_ref_for_phi=omega_ref_for_phi,
         interpolation=interpolation,
         boundary_resolution=parsed["boundary-resolution"],
-        nu_theta_inlet=parsed["nu-theta-inlet"],
+        Vtheta_inlet=parsed["vtheta-inlet"],
         prefer_root=prefer_root,
     )
     TM.write_toml(map, output_path; group=output_group)

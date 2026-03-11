@@ -47,6 +47,7 @@
         @test P.thermal_conductivity(air, p, h_air) > 0
         @test P.phase(air, p, h_air) == :gas
         @test isapprox(P.enthalpy_from_pressure_entropy(air, p, s_ph), h_air; rtol=1e-12)
+        @test isapprox(P.pressure_from_enthalpy_entropy(air, h_air, s_ph), p; rtol=1e-12)
         h2s = P.isentropic_enthalpy(air, p, h_air, 2 * p)
         s2 = P.entropy(air, 2 * p, h2s)
         @test isapprox(s2, s_ph; rtol=1e-12)

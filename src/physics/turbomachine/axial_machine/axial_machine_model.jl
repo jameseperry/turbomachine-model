@@ -60,8 +60,8 @@ Field meanings:
   solution from station `k` to `k+1`.
 - `m_tip_bounds`: tabulation/operating domain bounds for reference tip Mach-like
   speed.
-- `phi_in_bounds`: tabulation/operating domain bounds for inlet flow
-  coefficient.
+- `Vx_bounds`: tabulation/operating domain bounds for inlet axial velocity
+  through the machine [m/s].
 """
 struct AxialMachineModel
     gamma::Float64
@@ -71,7 +71,7 @@ struct AxialMachineModel
     speed_ratio_ref::Float64
     rows::Vector{AxialRow}
     m_tip_bounds::Tuple{Float64,Float64}
-    phi_in_bounds::Tuple{Float64,Float64}
+    Vx_bounds::Tuple{Float64,Float64}
 end
 
 function AxialMachineModel(
@@ -80,7 +80,7 @@ function AxialMachineModel(
     r_tip_ref::Real,
     rows::Vector{AxialRow},
     m_tip_bounds::Tuple{<:Real,<:Real},
-    phi_in_bounds::Tuple{<:Real,<:Real},
+    Vx_bounds::Tuple{<:Real,<:Real},
     ;
     r_flow_ref::Union{Nothing,Real}=nothing,
     speed_ratio_ref::Union{Nothing,Real}=nothing,
@@ -90,9 +90,9 @@ function AxialMachineModel(
     r_tip_ref > 0 || error("r_tip_ref must be > 0")
     isempty(rows) && error("rows must not be empty")
     m_lo, m_hi = Float64(m_tip_bounds[1]), Float64(m_tip_bounds[2])
-    phi_lo, phi_hi = Float64(phi_in_bounds[1]), Float64(phi_in_bounds[2])
+    Vx_lo, Vx_hi = Float64(Vx_bounds[1]), Float64(Vx_bounds[2])
     m_hi > m_lo > 0 || error("m_tip_bounds must satisfy 0 < lo < hi")
-    phi_hi > phi_lo > 0 || error("phi_in_bounds must satisfy 0 < lo < hi")
+    Vx_hi > Vx_lo > 0 || error("Vx_bounds must satisfy 0 < lo < hi")
     idx_ref = let idx = findfirst(row -> row.speed_ratio_to_ref != 0.0, rows)
         isnothing(idx) ? 1 : idx
     end
@@ -110,7 +110,7 @@ function AxialMachineModel(
         speed_ratio_ref_f,
         rows,
         (m_lo, m_hi),
-        (phi_lo, phi_hi),
+        (Vx_lo, Vx_hi),
     )
 end
 

@@ -24,7 +24,9 @@ ALL_MAP_TOMLS := $(sort $(USER_MAP_TOMLS) $(GENERATED_MAP_TOMLS))
 PERFORMANCE_MAP_PLOTS := $(ALL_MAP_TOMLS:.toml=.performance_map.png)
 OPERATING_SWEEP_PLOTS := $(ALL_MAP_TOMLS:.toml=.operating_sweep.png)
 OPERATING_SWEEP_CSV := $(ALL_MAP_TOMLS:.toml=.operating_sweep.csv)
-AXIAL_DIAGNOSTIC_TXT := $(ALL_AXIAL_TOMLS:.toml=.operating_point.txt)
+AXIAL_DIAGNOSTIC_LOW_TXT := $(ALL_AXIAL_TOMLS:.toml=.operating_point.low.txt)
+AXIAL_DIAGNOSTIC_HIGH_TXT := $(ALL_AXIAL_TOMLS:.toml=.operating_point.high.txt)
+AXIAL_DIAGNOSTIC_TXT := $(AXIAL_DIAGNOSTIC_LOW_TXT) $(AXIAL_DIAGNOSTIC_HIGH_TXT)
 
 .PHONY: all plots sweeps diagnostics clean
 .SECONDARY: $(GENERATED_MAP_TOMLS)
@@ -45,33 +47,57 @@ axial/turbine/demo.toml: $(SCRIPTS)/create_demo_object.jl
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/create_demo_object.jl axial_turbine_model $@
 
-axial/compressor/%.operating_point.txt: axial/compressor/%.toml
+axial/compressor/%.operating_point.low.txt: axial/compressor/%.toml
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/diagnose_axial_operating_point.jl $< \
 		--pt-in $(DIAG_PT_IN) \
 		--tt-in $(DIAG_TT_IN) \
 		--omega $(COMPRESSOR_DIAG_OMEGA) \
 		--mdot $(COMPRESSOR_DIAG_MDOT) \
+		--prefer-root low \
 		--output $@
 
-axial/turbine/%.operating_point.txt: axial/turbine/%.toml
+axial/compressor/%.operating_point.high.txt: axial/compressor/%.toml
+	@mkdir -p $(@D)
+	$(JULIA) $(SCRIPTS)/diagnose_axial_operating_point.jl $< \
+		--pt-in $(DIAG_PT_IN) \
+		--tt-in $(DIAG_TT_IN) \
+		--omega $(COMPRESSOR_DIAG_OMEGA) \
+		--mdot $(COMPRESSOR_DIAG_MDOT) \
+		--prefer-root high \
+		--output $@
+
+axial/turbine/%.operating_point.low.txt: axial/turbine/%.toml
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/diagnose_axial_operating_point.jl $< \
 		--pt-in $(DIAG_PT_IN) \
 		--tt-in $(DIAG_TT_IN) \
 		--omega $(TURBINE_DIAG_OMEGA) \
 		--mdot $(TURBINE_DIAG_MDOT) \
+		--prefer-root low \
+		--output $@
+
+axial/turbine/%.operating_point.high.txt: axial/turbine/%.toml
+	@mkdir -p $(@D)
+	$(JULIA) $(SCRIPTS)/diagnose_axial_operating_point.jl $< \
+		--pt-in $(DIAG_PT_IN) \
+		--tt-in $(DIAG_TT_IN) \
+		--omega $(TURBINE_DIAG_OMEGA) \
+		--mdot $(TURBINE_DIAG_MDOT) \
+		--prefer-root high \
 		--output $@
 
 map/compressor/%.toml: axial/compressor/%.toml
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/generate_performance_map_from_axial_machine_model.jl $< $@ \
-		--interpolation $(INTERPOLATION)
+		--interpolation $(INTERPOLATION) \
+		--prefer-root low
 
 map/turbine/%.toml: axial/turbine/%.toml
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/generate_performance_map_from_axial_machine_model.jl $< $@ \
 		--interpolation $(INTERPOLATION) \
+		--prefer-root high \
 		--n-speed 100 \
 		--n-flow 100
 

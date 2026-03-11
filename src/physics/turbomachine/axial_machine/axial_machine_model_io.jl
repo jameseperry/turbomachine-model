@@ -6,11 +6,11 @@ function _aero_to_toml_dict(model::BladeAeroModel)
         "format" => "blade_aero_model",
         "deviation_ref" => Float64(model.deviation_ref),
         "deviation_incidence_sensitivity" => Float64(model.deviation_incidence_sensitivity),
-        "loss_base" => Float64(model.loss_base),
-        "loss_incidence" => Float64(model.loss_incidence),
+        "loss_entropy_base" => Float64(model.loss_entropy_base),
+        "loss_entropy_incidence" => Float64(model.loss_entropy_incidence),
         "stall_incidence_limit" => Float64(model.stall_incidence_limit),
-        "k_theta_min" => Float64(model.k_theta_min),
-        "k_theta_max" => Float64(model.k_theta_max),
+        "theta_min" => Float64(model.theta_min),
+        "theta_max" => Float64(model.theta_max),
     )
 end
 
@@ -21,11 +21,11 @@ function _aero_from_toml_dict(data::Dict{String,Any})
         return BladeAeroModel{Float64}(
             Float64(data["deviation_ref"]),
             Float64(data["deviation_incidence_sensitivity"]),
-            Float64(data["loss_base"]),
-            Float64(data["loss_incidence"]),
+            Float64(data["loss_entropy_base"]),
+            Float64(data["loss_entropy_incidence"]),
             Float64(data["stall_incidence_limit"]),
-            Float64(data["k_theta_min"]),
-            Float64(data["k_theta_max"]),
+            Float64(data["theta_min"]),
+            Float64(data["theta_max"]),
         )
     end
     error("unsupported aero model format=$(fmt)")
@@ -101,7 +101,7 @@ function write_toml(
     node["r_flow_ref"] = model.r_flow_ref
     node["speed_ratio_ref"] = model.speed_ratio_ref
     node["m_tip_bounds"] = [model.m_tip_bounds[1], model.m_tip_bounds[2]]
-    node["phi_in_bounds"] = [model.phi_in_bounds[1], model.phi_in_bounds[2]]
+    node["Vx_bounds"] = [model.Vx_bounds[1], model.Vx_bounds[2]]
     node["rows"] = [_row_to_toml_dict(row) for row in model.rows]
     open(path, "w") do io
         TOML.print(io, data; sorted=true)
@@ -116,7 +116,7 @@ function read_toml(
 )
     data = TOML.parsefile(path)
     node = _find_axial_group(data, group)
-    for key in ("gamma", "gas_constant", "r_tip_ref", "r_flow_ref", "speed_ratio_ref", "m_tip_bounds", "phi_in_bounds", "rows")
+    for key in ("gamma", "gas_constant", "r_tip_ref", "r_flow_ref", "speed_ratio_ref", "m_tip_bounds", "Vx_bounds", "rows")
         haskey(node, key) || error("missing TOML key $(key)")
     end
     rows = AxialRow[_row_from_toml_dict(row_data) for row_data in node["rows"]]
@@ -126,7 +126,7 @@ function read_toml(
         Float64(node["r_tip_ref"]),
         rows,
         (Float64(node["m_tip_bounds"][1]), Float64(node["m_tip_bounds"][2])),
-        (Float64(node["phi_in_bounds"][1]), Float64(node["phi_in_bounds"][2])),
+        (Float64(node["Vx_bounds"][1]), Float64(node["Vx_bounds"][2])),
         r_flow_ref=Float64(node["r_flow_ref"]),
         speed_ratio_ref=Float64(node["speed_ratio_ref"]),
     )
@@ -141,11 +141,11 @@ function demo_axial_compressor_model()
             rotor_aero_model(
                 deviation_ref=0.0,
                 deviation_incidence_sensitivity=0.62,
-                loss_base=0.0025,
-                loss_incidence=0.045,
+                loss_entropy_base=2.5,
+                loss_entropy_incidence=45.0,
                 stall_incidence_limit=0.36,
-                k_theta_min=-2.0,
-                k_theta_max=1.1,
+                theta_min=atan(-2.0),
+                theta_max=atan(1.1),
             ),
             0.140,
             0.220,
@@ -157,11 +157,11 @@ function demo_axial_compressor_model()
             stator_aero_model(
                 deviation_ref=0.0,
                 deviation_incidence_sensitivity=0.70,
-                loss_base=0.0018,
-                loss_incidence=0.030,
+                loss_entropy_base=1.8,
+                loss_entropy_incidence=30.0,
                 stall_incidence_limit=0.34,
-                k_theta_min=-1.0,
-                k_theta_max=2.0,
+                theta_min=atan(-1.0),
+                theta_max=atan(2.0),
             ),
             0.140,
             0.220,
@@ -173,11 +173,11 @@ function demo_axial_compressor_model()
             rotor_aero_model(
                 deviation_ref=0.0,
                 deviation_incidence_sensitivity=0.60,
-                loss_base=0.0030,
-                loss_incidence=0.050,
+                loss_entropy_base=3.0,
+                loss_entropy_incidence=50.0,
                 stall_incidence_limit=0.34,
-                k_theta_min=-2.1,
-                k_theta_max=1.1,
+                theta_min=atan(-2.1),
+                theta_max=atan(1.1),
             ),
             0.140,
             0.220,
@@ -189,11 +189,11 @@ function demo_axial_compressor_model()
             stator_aero_model(
                 deviation_ref=0.0,
                 deviation_incidence_sensitivity=0.70,
-                loss_base=0.0020,
-                loss_incidence=0.032,
+                loss_entropy_base=2.0,
+                loss_entropy_incidence=32.0,
                 stall_incidence_limit=0.34,
-                k_theta_min=-1.0,
-                k_theta_max=2.0,
+                theta_min=atan(-1.0),
+                theta_max=atan(2.0),
             ),
             0.140,
             0.220,
@@ -208,7 +208,7 @@ function demo_axial_compressor_model()
         0.220,
         rows,
         (0.01, 1.10),
-        (0.01, 0.95),
+        (4.0, 220.0),
     )
 end
 
@@ -225,11 +225,11 @@ function demo_axial_turbine_model()
             stator_aero_model(
                 deviation_ref=0.0,
                 deviation_incidence_sensitivity=0.45,
-                loss_base=0.0010,
-                loss_incidence=0.010,
+                loss_entropy_base=1.0,
+                loss_entropy_incidence=10.0,
                 stall_incidence_limit=0.55,
-                k_theta_min=0.1,
-                k_theta_max=2.2,
+                theta_min=atan(0.1),
+                theta_max=atan(2.2),
             ),
             0.140,
             0.220,
@@ -242,11 +242,11 @@ function demo_axial_turbine_model()
             rotor_aero_model(
                 deviation_ref=0.0,
                 deviation_incidence_sensitivity=0.55,
-                loss_base=0.0012,
-                loss_incidence=0.012,
+                loss_entropy_base=1.2,
+                loss_entropy_incidence=12.0,
                 stall_incidence_limit=0.55,
-                k_theta_min=-3.0,
-                k_theta_max=-0.6,
+                theta_min=atan(-3.0),
+                theta_max=atan(-0.6),
             ),
             0.140,
             0.220,
@@ -261,6 +261,6 @@ function demo_axial_turbine_model()
         0.220,
         rows,
         (0.10, 0.90),
-        (0.10, 0.70),
+        (6.0, 120.0),
     )
 end

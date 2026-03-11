@@ -126,6 +126,14 @@ function enthalpy_from_pressure_entropy(
     _not_implemented(eos, :enthalpy_from_pressure_entropy)
 end
 
+function pressure_from_enthalpy_entropy(
+    eos::AbstractEOS,
+    enthalpy::Real,
+    entropy::Real,
+)
+    _not_implemented(eos, :pressure_from_enthalpy_entropy)
+end
+
 """
 Default isentropic enthalpy helper for any EOS model.
 

@@ -264,3 +264,19 @@ function enthalpy_from_pressure_entropy(
     )
     return enthalpy_from_temperature(comp, temperature)
 end
+
+function pressure_from_enthalpy_entropy(
+    comp::IdealGasEOS,
+    enthalpy::Real,
+    entropy::Real,
+)
+    _assert_positive(enthalpy, "enthalpy")
+    temperature = temperature_from_enthalpy(comp, enthalpy)
+    pressure = comp.pressure_reference * exp(
+        (comp.entropy_reference +
+         comp.specific_heat_cp * log(temperature / comp.temperature_reference) -
+         entropy) / comp.gas_constant,
+    )
+    _assert_positive(pressure, "pressure")
+    return pressure
+end

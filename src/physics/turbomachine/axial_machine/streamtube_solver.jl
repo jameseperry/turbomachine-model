@@ -1,4 +1,12 @@
 using ....Utility: bracket_bisect_roots
+using ...Fluids
+
+@inline _primal_value(x::Real) = hasfield(typeof(x), :value) ? getfield(x, :value) : x
+
+@inline function _positive_finite(x::Real)
+    x_f = _primal_value(x)
+    return isfinite(x_f) && x_f > 0.0
+end
 
 function _station_radius(model::AxialMachineModel, streamtube_radii::AbstractVector{<:Real}, station_index::Int)
     n_rows = length(model.rows)
@@ -11,659 +19,948 @@ function _station_radius(model::AxialMachineModel, streamtube_radii::AbstractVec
     return 0.5 * (Float64(streamtube_radii[station_index - 1]) + Float64(streamtube_radii[station_index]))
 end
 
-function _build_station_data(
-    model::AxialMachineModel,
-    streamtube_radii::AbstractVector{<:Real},
-    tau::Vector{Float64},
-    pi::Vector{Float64},
-    nu_theta::Vector{Float64},
-    nu_x::Vector{Float64},
+function _safe_entropy(
+    eos::Fluids.AbstractEOS,
+    pressure::Real,
+    enthalpy::Real,
 )
-    n_stations = length(tau)
-    return [
-        (
-            station_index=k,
-            radius=_station_radius(model, streamtube_radii, k),
-            area=station_area(model, k),
-            tau=tau[k],
-            pi=pi[k],
-            nu_theta=nu_theta[k],
-            nu_x=nu_x[k],
-        ) for k in 1:n_stations
-    ]
+    (_positive_finite(pressure) && _positive_finite(enthalpy)) || return NaN
+    try
+        return Fluids.entropy(eos, pressure, enthalpy)
+    catch
+        return NaN
+    end
 end
 
-function _invalid_streamtube_result(n_rows::Int; stall::Bool, choke::Bool, mu::Float64=NaN)
-    n_stations = n_rows + 1
+function _safe_pressure_from_enthalpy_entropy(
+    eos::Fluids.AbstractEOS,
+    enthalpy::Real,
+    entropy::Real,
+)
+    (_positive_finite(enthalpy) && isfinite(_primal_value(entropy))) || return NaN
+    try
+        pressure = Fluids.pressure_from_enthalpy_entropy(eos, enthalpy, entropy)
+        return _positive_finite(pressure) ? Float64(pressure) : NaN
+    catch
+        return NaN
+    end
+end
+
+function _safe_temperature(
+    eos::Fluids.AbstractEOS,
+    pressure::Real,
+    enthalpy::Real,
+)
+    (_positive_finite(pressure) && _positive_finite(enthalpy)) || return NaN
+    try
+        temperature = Fluids.temperature(eos, pressure, enthalpy)
+        return _positive_finite(temperature) ? Float64(temperature) : NaN
+    catch
+        return NaN
+    end
+end
+
+function _safe_density(
+    eos::Fluids.AbstractEOS,
+    pressure::Real,
+    enthalpy::Real,
+)
+    (_positive_finite(pressure) && _positive_finite(enthalpy)) || return NaN
+    try
+        density = Fluids.density(eos, pressure, enthalpy)
+        return _positive_finite(density) ? Float64(density) : NaN
+    catch
+        return NaN
+    end
+end
+
+function _safe_speed_of_sound(
+    eos::Fluids.AbstractEOS,
+    pressure::Real,
+    enthalpy::Real,
+)
+    (_positive_finite(pressure) && _positive_finite(enthalpy)) || return NaN
+    try
+        a = Fluids.speed_of_sound(eos, pressure, enthalpy)
+        return _positive_finite(a) ? Float64(a) : NaN
+    catch
+        return NaN
+    end
+end
+
+function _safe_cp(
+    eos::Fluids.AbstractEOS,
+    pressure::Real,
+    enthalpy::Real,
+)
+    (_positive_finite(pressure) && _positive_finite(enthalpy)) || return NaN
+    try
+        cp = Fluids.heat_capacity_cp(eos, pressure, enthalpy)
+        return _positive_finite(cp) ? Float64(cp) : NaN
+    catch
+        return NaN
+    end
+end
+
+function _thermo_efficiency(
+    eos::Fluids.AbstractEOS,
+    pt_in::Float64,
+    ht_in::Float64,
+    pt_out::Float64,
+    ht_out::Float64,
+)
+    (_positive_finite(pt_in) && _positive_finite(ht_in) && _positive_finite(pt_out) && _positive_finite(ht_out)) || return NaN
+    h2s = try
+        Fluids.isentropic_enthalpy(eos, pt_in, ht_in, pt_out)
+    catch
+        NaN
+    end
+    isfinite(h2s) || return NaN
+    if h2s >= ht_in
+        denom = ht_out - ht_in
+        abs(denom) > 1e-12 || return NaN
+        return (h2s - ht_in) / denom
+    end
+    denom = ht_in - h2s
+    abs(denom) > 1e-12 || return NaN
+    return (ht_in - ht_out) / denom
+end
+
+function _station_static_state(
+    eos::Fluids.AbstractEOS,
+    pt_t::Float64,
+    ht_t::Float64,
+    s_t::Float64,
+    Vx::Float64,
+    Vtheta::Float64,
+    area::Float64,
+    mdot::Float64,
+)
+    Vmag2 = Vx^2 + Vtheta^2
+    h = Fluids.static_enthalpy_from_total(ht_t, sqrt(Vmag2))
+    p = _safe_pressure_from_enthalpy_entropy(eos, h, s_t)
+    T = _safe_temperature(eos, p, h)
+    rho = _safe_density(eos, p, h)
+    a = _safe_speed_of_sound(eos, p, h)
+    Mach = (_positive_finite(a) && isfinite(Vmag2)) ? sqrt(Vmag2) / a : NaN
+    mdot_station = (_positive_finite(rho) && isfinite(Vx) && isfinite(area)) ? rho * Vx * area : NaN
     return (
-        PR=NaN,
-        eta=NaN,
-        stall=stall,
-        choke=choke,
-        valid=false,
-        mu=mu,
-        tau=fill(NaN, n_stations),
-        pi=fill(NaN, n_stations),
-        nu_theta=fill(NaN, n_stations),
-        nu_x=fill(NaN, n_stations),
-        stall_row=falses(n_rows),
-        choke_row=falses(n_rows),
-        valid_row=trues(n_rows),
-        station_data=NamedTuple[],
-        row_data=NamedTuple[],
+        h=h,
+        p=p,
+        T=T,
+        rho=rho,
+        a=a,
+        Mach=Mach,
+        V=sqrt(Vmag2),
+        mdot_station=mdot_station,
     )
 end
 
-function _mass_flow_invariant(
-    gamma::Real,
-    pi::Real,
-    A::Real,
-    tau::Real,
-    nu_x::Real,
-    nu_theta::Real,
-)
-    tau > 0 || return NaN
-    term = 1 - ((gamma - 1) / (2 * tau)) * (nu_x^2 + nu_theta^2)
-    term > 0 || return NaN
-    return pi * A * (nu_x / tau) * term^(1 / (gamma - 1))
+struct StreamtubeStationState
+    radius::Float64
+    area::Float64
+    pt_t::Float64
+    ht_t::Float64
+    s_t::Float64
+    p::Float64
+    h::Float64
+    Tt::Float64
+    T::Float64
+    rho::Float64
+    a::Float64
+    Vx::Float64
+    Vtheta::Float64
+    V::Float64
+    Mach::Float64
+    mdot_station::Float64
+    valid::Bool
+    stall::Bool
+    choke::Bool
 end
 
-function _solve_station_nu_x(
-    gamma::Float64,
-    mu::Float64,
-    pi::Float64,
-    A::Float64,
-    tau::Float64,
-    nu_theta::Float64;
-    prefer::Symbol=:low,
+struct StreamtubeSolveResult
+    pressure_ratio::Float64
+    efficiency::Float64
+    thermo_efficiency::Float64
+    valid::Bool
+    stall::Bool
+    choke::Bool
+    stations::Vector{StreamtubeStationState}
+    row_data::Vector{NamedTuple}
+    inputs::NamedTuple
+end
+
+@inline _station_field(stations::Vector{StreamtubeStationState}, field::Symbol) = [getfield(st, field) for st in stations]
+
+function Base.getproperty(result::StreamtubeSolveResult, name::Symbol)
+    if name in fieldnames(StreamtubeSolveResult)
+        return getfield(result, name)
+    elseif name === :PR
+        return getfield(result, :pressure_ratio)
+    elseif name === :eta
+        return getfield(result, :efficiency)
+    elseif name === :pt_t
+        return _station_field(getfield(result, :stations), :pt_t)
+    elseif name === :ht_t
+        return _station_field(getfield(result, :stations), :ht_t)
+    elseif name === :Vx
+        return _station_field(getfield(result, :stations), :Vx)
+    elseif name === :Vtheta
+        return _station_field(getfield(result, :stations), :Vtheta)
+    elseif name === :station_data
+        return [
+            (
+                station_index=i,
+                radius=st.radius,
+                area=st.area,
+                pt_t=st.pt_t,
+                ht_t=st.ht_t,
+                s_t=st.s_t,
+                p=st.p,
+                h=st.h,
+                Tt=st.Tt,
+                T=st.T,
+                rho=st.rho,
+                a=st.a,
+                Vx=st.Vx,
+                Vtheta=st.Vtheta,
+                V=st.V,
+                Mach=st.Mach,
+                mdot_station=st.mdot_station,
+                mdot_error=st.mdot_station - getfield(result, :inputs).mdot,
+                valid=st.valid,
+                stall=st.stall,
+                choke=st.choke,
+            ) for (i, st) in pairs(getfield(result, :stations))
+        ]
+    elseif name === :stall_row
+        return [st.stall for st in getfield(result, :stations)[2:end]]
+    elseif name === :choke_row
+        return [st.choke for st in getfield(result, :stations)[2:end]]
+    elseif name === :valid_row
+        return [st.valid for st in getfield(result, :stations)[2:end]]
+    elseif name === :summary
+        return (
+            pressure_ratio=getfield(result, :pressure_ratio),
+            efficiency=getfield(result, :efficiency),
+            thermo_efficiency=getfield(result, :thermo_efficiency),
+            valid=getfield(result, :valid),
+            stall=getfield(result, :stall),
+            choke=getfield(result, :choke),
+        )
+    end
+    return getfield(result, name)
+end
+
+function Base.propertynames(::StreamtubeSolveResult, private::Bool=false)
+    names = (
+        fieldnames(StreamtubeSolveResult)...,
+        :PR, :eta, :pt_t, :ht_t, :Vx, :Vtheta, :station_data,
+        :stall_row, :choke_row, :valid_row, :summary,
+    )
+    return private ? names : names
+end
+
+@inline function _nan_station_state()
+    return StreamtubeStationState(
+        NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN, NaN,
+        NaN, NaN, NaN, NaN, NaN, NaN,
+        false, false, false,
+    )
+end
+
+function _build_station_state(
+    eos::Fluids.AbstractEOS,
+    radius::Float64,
+    area::Float64,
+    pt_t::Float64,
+    ht_t::Float64,
+    Vx::Float64,
+    Vtheta::Float64,
+    mdot::Float64,
+    valid::Bool=false,
+    stall::Bool=false,
+    choke::Bool=false,
 )
-    tau > 0 || return (converged=false, nu_x=NaN)
-    term = (2 * tau / (gamma - 1)) - nu_theta^2
-    term > 0 || return (converged=false, nu_x=NaN)
-    x_hi = sqrt(term) * (1 - 1e-8)
-    x_lo = 1e-10
-    f = nu_x -> mu - _mass_flow_invariant(gamma, pi, A, tau, nu_x, nu_theta)
+    s_t = _safe_entropy(eos, pt_t, ht_t)
+    static = _station_static_state(eos, pt_t, ht_t, s_t, Vx, Vtheta, area, mdot)
+    return StreamtubeStationState(
+        radius,
+        area,
+        pt_t,
+        ht_t,
+        s_t,
+        static.p,
+        static.h,
+        _safe_temperature(eos, pt_t, ht_t),
+        static.T,
+        static.rho,
+        static.a,
+        Vx,
+        Vtheta,
+        static.V,
+        static.Mach,
+        static.mdot_station,
+        valid,
+        stall,
+        choke,
+    )
+end
+
+@inline function _with_station_flags(
+    state::StreamtubeStationState;
+    valid::Bool=state.valid,
+    stall::Bool=state.stall,
+    choke::Bool=state.choke,
+)
+    return StreamtubeStationState(
+        state.radius,
+        state.area,
+        state.pt_t,
+        state.ht_t,
+        state.s_t,
+        state.p,
+        state.h,
+        state.Tt,
+        state.T,
+        state.rho,
+        state.a,
+        state.Vx,
+        state.Vtheta,
+        state.V,
+        state.Mach,
+        state.mdot_station,
+        valid,
+        stall,
+        choke,
+    )
+end
+
+function _station_continuity_residual(
+    eos::Fluids.AbstractEOS,
+    mdot::Float64,
+    pt_t::Float64,
+    ht_t::Float64,
+    s_t::Float64,
+    area::Float64,
+    Vtheta::Float64,
+    Vx::Float64,
+)
+    Vx > 0.0 || return NaN
+    static = _station_static_state(eos, pt_t, ht_t, s_t, Vx, Vtheta, area, mdot)
+    _positive_finite(static.rho) || return NaN
+    return mdot - static.rho * Vx * area
+end
+
+function _row_outlet_state_from_Vx(
+    eos::Fluids.AbstractEOS,
+    mdot::Float64,
+    radius_out::Float64,
+    ht_t_in::Float64,
+    Vtheta_in::Float64,
+    U::Float64,
+    k_theta_exit::Float64,
+    s_t_row_in::Float64,
+    delta_s_t::Float64,
+    area_out::Float64,
+    Vx_out::Float64,
+)
+    Vtheta_out = U + Vx_out * k_theta_exit
+    ht_t_out = ht_t_in + U * (Vtheta_out - Vtheta_in)
+    s_t_out = s_t_row_in + delta_s_t
+    pt_t_out = _safe_pressure_from_enthalpy_entropy(eos, ht_t_out, s_t_out)
+    state = _build_station_state(
+        eos,
+        radius_out,
+        area_out,
+        pt_t_out,
+        ht_t_out,
+        Vx_out,
+        Vtheta_out,
+        mdot,
+    )
+    return StreamtubeStationState(
+        state.radius,
+        state.area,
+        state.pt_t,
+        state.ht_t,
+        s_t_out,
+        state.p,
+        state.h,
+        state.Tt,
+        state.T,
+        state.rho,
+        state.a,
+        state.Vx,
+        state.Vtheta,
+        state.V,
+        state.Mach,
+        state.mdot_station,
+        state.valid,
+        state.stall,
+        state.choke,
+    )
+end
+
+function _is_physically_admissible_outlet(outlet::StreamtubeStationState)
+    return (
+        _positive_finite(outlet.Vx) &&
+        isfinite(outlet.Vtheta) &&
+        _positive_finite(outlet.ht_t) &&
+        _positive_finite(outlet.pt_t) &&
+        _positive_finite(outlet.h) &&
+        _positive_finite(outlet.p) &&
+        _positive_finite(outlet.rho) &&
+        _positive_finite(outlet.a) &&
+        isfinite(outlet.Mach) &&
+        isfinite(outlet.V) &&
+        _positive_finite(outlet.mdot_station)
+    )
+end
+
+function _select_outlet_candidate(candidates::Vector{<:StreamtubeStationState}, prefer_root::Symbol)
+    isempty(candidates) && return nothing
+    return prefer_root == :high ? last(candidates) : first(candidates)
+end
+
+function _velocity_upper_bound(
+    ht_t::Float64,
+    Vtheta::Float64,
+)
+    kinetic_margin = 2 * ht_t - Vtheta^2
+    kinetic_margin > 0.0 || return NaN
+    return sqrt(kinetic_margin) * (1 - 1e-10)
+end
+
+function _select_root(roots::Vector{Float64}, prefer_root::Symbol)
+    isempty(roots) && return NaN
+    prefer_root == :high && return last(roots)
+    return first(roots)
+end
+
+function _solve_station_Vx(
+    eos::Fluids.AbstractEOS,
+    mdot::Float64,
+    pt_t::Float64,
+    ht_t::Float64,
+    s_t::Float64,
+    area::Float64,
+    Vtheta::Float64;
+    prefer::Symbol=:low,
+    prior_roots::AbstractVector{<:Real}=Float64[],
+)
+    x_hi = _velocity_upper_bound(ht_t, Vtheta)
+    isfinite(x_hi) || return (converged=false, Vx=NaN, roots=Float64[])
+    f = Vx -> _station_continuity_residual(eos, mdot, pt_t, ht_t, s_t, area, Vtheta, Vx)
     roots = bracket_bisect_roots(
         f,
-        (x_lo, x_hi);
-        n_scan=201,
-        root_tol=1e-10,
+        (1e-10, x_hi);
+        n_scan=401,
+        root_tol=1e-9,
         max_bisect_iters=80,
+        prior_roots=prior_roots,
         dedupe_atol=1e-8,
     )
-    isempty(roots) && return (converged=false, nu_x=NaN)
-    nu_x = prefer == :high ? last(roots) : first(roots)
-    return (converged=true, nu_x=nu_x)
+    isempty(roots) && return (converged=false, Vx=NaN, roots=roots)
+    return (converged=true, Vx=_select_root(roots, prefer), roots=roots)
 end
 
-function _solve_row_nu_x(
-    model::AxialMachineModel,
-    station_in::Int,
-    station_out::Int,
-    mu::Float64,
-    tau::Vector{Float64},
-    pi::Vector{Float64},
-    nu_theta::Vector{Float64},
-    nu_u::Float64,
+function _solve_row_Vx_roots(
+    eos::Fluids.AbstractEOS,
+    mdot::Float64,
+    radius_out::Float64,
+    ht_t_in::Float64,
+    Vtheta_in::Float64,
+    U::Float64,
     k_theta_exit::Float64,
-    delta_s_hat::Float64,
-    prefer_root::Symbol,
+    s_t_row_in::Float64,
+    delta_s_t::Float64,
+    area_out::Float64,
 )
-    gamma_ratio = model.gamma / (model.gamma - 1)
-    mu_residual = function (nu_x_out)
-        nu_theta_out = nu_u + nu_x_out * k_theta_exit
-        tau_out = tau[station_in] + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta[station_in])
-        tau_out > 0 || return NaN
-        pi_out = pi[station_in] * (tau_out / tau[station_in])^gamma_ratio *
-                 exp(-gamma_ratio * delta_s_hat)
-        mu_at_nu_x = _mass_flow_invariant(
-            model.gamma,
-            pi_out,
-            station_area(model, station_out),
-            tau_out,
-            nu_x_out,
-            nu_theta_out,
+    # The row solve only makes sense while enough total enthalpy remains to
+    # support the requested outlet kinetic energy. This defines the root-search
+    # interval for the outlet axial velocity.
+    x_hi = _velocity_upper_bound(ht_t_in, U)
+    isfinite(x_hi) || return Float64[]
+
+    # Solve continuity for the outlet axial velocity using the full trial outlet
+    # state reconstructed from each candidate Vx_out.
+    function row_residual(Vx_out)
+        outlet = _row_outlet_state_from_Vx(
+            eos,
+            mdot,
+            radius_out,
+            ht_t_in,
+            Vtheta_in,
+            U,
+            k_theta_exit,
+            s_t_row_in,
+            delta_s_t,
+            area_out,
+            Vx_out,
         )
-        return mu - mu_at_nu_x
+        return _positive_finite(outlet.mdot_station) ? (mdot - outlet.mdot_station) : NaN
     end
 
-    roots = bracket_bisect_roots(
-        mu_residual,
-        (1e-10, 2.5);
-        n_scan=201,
-        root_tol=1e-10,
+    # Multiple roots correspond to multiple admissible outlet-velocity branches
+    # for the same row inlet state.
+    return bracket_bisect_roots(
+        row_residual,
+        (1e-10, x_hi);
+        n_scan=401,
+        root_tol=1e-9,
         max_bisect_iters=80,
         dedupe_atol=1e-8,
     )
-    isempty(roots) && return (converged=false, choke=true, nu_x=NaN)
-    nu_x = prefer_root == :high ? last(roots) : first(roots)
-    return (converged=true, choke=false, nu_x=nu_x)
 end
 
-"""
-    _advance_row!(model, row, aero, row_radius, station_in, station_out, mu, tau, pi, nu_theta, nu_x, m_tip, prefer_root)
-
-Advance one blade row from `station_in` to `station_out` in non-dimensional form.
-
-Key state variables and physical interpretation:
-- `nu_x`: axial velocity non-dimensionalized by reference inlet acoustic speed
-  (`nu_x = V_x / a0_ref`), stored per station.
-- `nu_theta`: tangential (swirl) velocity in the same scaling
-  (`nu_theta = V_theta / a0_ref`), stored per station.
-- `nu_u`: blade speed at this row/radius in the same scaling
-  (`nu_u = U / a0_ref`). For stators, `speed_ratio_to_ref = 0`, so `nu_u = 0`.
-- `tau`: non-dimensional total enthalpy / temperature-like state
-  (`tau = h_t / h_t_ref` for this ideal-gas closure), stored per station.
-- `pi`: non-dimensional total pressure ratio state (`pi = p_t / p_t_ref`),
-  stored per station.
-- `mu`: mass-flow invariant used by continuity closure. At each stage update we
-  solve for `nu_x_out` such that this invariant is preserved.
-- `m_tip`: reference rotor-tip speed parameter (`m_tip = omega_ref * r_tip_ref / a0_ref`),
-  used to build row-local blade speed via `speed_ratio_to_ref` and `row_radius`.
-
-Behavior:
-- Calls `blade_aero` to get turning and loss for the row.
-- Solves a scalar continuity residual for `nu_x_out` at the row exit.
-- Updates `nu_theta`, `tau`, and `pi`; stator behavior is the `nu_u = 0` special case.
-"""
-function _advance_row!(
+function _invalid_streamtube_result(
     model::AxialMachineModel,
-    row::AxialRow,
-    aero::BladeAeroModel,
-    row_radius::Float64,
-    station_in::Int,
-    station_out::Int,
-    mu::Float64,
-    tau::Vector{Float64},
-    pi::Vector{Float64},
-    nu_theta::Vector{Float64},
-    nu_x::Vector{Float64},
-    m_tip::Float64,
-    prefer_root::Symbol,
+    eos::Fluids.AbstractEOS,
+    streamtube_radii::AbstractVector{<:Real};
+    pt_in::Float64,
+    ht_in::Float64,
+    omega::Float64,
+    mdot::Float64,
+    Vx_inlet::Float64,
+    Vtheta_inlet::Float64,
+    stall::Bool,
+    choke::Bool,
 )
-    # nu_u is the blade-relative tangential velocity non-dimensionalized by the reference tip speed.
-    # For stators, speed_ratio_to_ref = 0, so nu_u = 0 and the blade-relative flow angle is the same as the absolute flow angle.
-    nu_u = row.speed_ratio_to_ref * m_tip * row_radius / model.r_tip_ref
-    area_in = station_area(model, station_in)
-    area_out = station_area(model, station_out)
-    nu_x_in = nu_x[station_in]
-    nu_theta_in = nu_theta[station_in]
-    tau_in = tau[station_in]
-    pi_in = pi[station_in]
-    
-    # Compute blade aerodynamics from the incoming relative flow and the row's
-    # metal inlet/exit angles. Incidence is measured against `theta_metal_in`
-    # and deviation is measured from `theta_metal_out`.
-    aero_out = blade_aero(
-        aero,
-        row.theta_metal_in,
-        row.theta_metal_out,
-        nu_x_in,
-        nu_theta_in,
-        nu_u,
+    n_rows = length(model.rows)
+    n_stations = n_rows + 1
+    stations = [_nan_station_state() for _ in 1:n_stations]
+    row_data = NamedTuple[]
+    return StreamtubeSolveResult(
+        NaN,
+        NaN,
+        NaN,
+        false,
+        stall,
+        choke,
+        stations,
+        row_data,
+        (
+            pt_in=pt_in,
+            ht_in=ht_in,
+            omega=omega,
+            mdot=mdot,
+            Vx_inlet=Vx_inlet,
+            Vtheta_inlet=Vtheta_inlet,
+            streamtube_radii=Float64.(streamtube_radii),
+        ),
     )
-    stall = (aero_out.stall_margin <= 0) || !aero_out.valid
-    diagnostics_base = (
-        row_index=station_in,
-        station_in=station_in,
-        station_out=station_out,
+end
+
+function _build_row_data(
+    eos::Fluids.AbstractEOS,
+    row::AxialRow,
+    row_index::Int,
+    row_radius::Float64,
+    omega::Float64,
+    aero_out::NamedTuple,
+    st_in::StreamtubeStationState,
+    st_out::StreamtubeStationState,
+)
+    U = row.speed_ratio_to_ref * omega * row_radius
+    Wtheta_in = st_in.Vtheta - U
+    Wtheta_out = st_out.Vtheta - U
+    Win = sqrt(st_in.Vx^2 + Wtheta_in^2)
+    Wout = sqrt(st_out.Vx^2 + Wtheta_out^2)
+    delta_ht = st_out.ht_t - st_in.ht_t
+    k_theta_exit = aero_out.valid ? tan(Float64(aero_out.theta_out)) : NaN
+    delta_s_t = aero_out.valid ? Float64(aero_out.delta_s_t) : NaN
+    row_thermo_efficiency = abs(U) > 1e-9 ?
+        _thermo_efficiency(eos, st_in.pt_t, st_in.ht_t, st_out.pt_t, st_out.ht_t) : NaN
+    q_in = (_positive_finite(st_in.rho) && isfinite(st_in.V)) ? 0.5 * st_in.rho * st_in.V^2 : NaN
+    stator_loss_coefficient = (abs(U) <= 1e-9 && isfinite(q_in) && q_in > 1e-9) ?
+        (st_in.pt_t - st_out.pt_t) / q_in : NaN
+    a_in = st_in.a
+    a_out = st_out.a
+    return (
+        row_index=row_index,
+        station_in=row_index,
+        station_out=row_index + 1,
         r_hub=row.r_hub,
         r_tip=row.r_tip,
         row_radius=row_radius,
         row_annulus_area=row_annulus_area(row),
-        area_in=area_in,
-        area_out=area_out,
+        area_in=st_in.area,
+        area_out=st_out.area,
         theta_metal_in=row.theta_metal_in,
         theta_metal_out=row.theta_metal_out,
         speed_ratio_to_ref=row.speed_ratio_to_ref,
-        nu_u=nu_u,
-        nu_x_in=nu_x_in,
-        nu_x_out=NaN,
-        nu_theta_in=nu_theta_in,
-        nu_theta_out=NaN,
-        delta_nu_theta=NaN,
-        tau_in=tau_in,
-        tau_out=NaN,
-        delta_tau=NaN,
-        pi_in=pi_in,
-        pi_out=NaN,
-        delta_pi=NaN,
-        k_theta_exit=Float64(aero_out.k_theta_exit),
-        delta_s_hat=Float64(aero_out.delta_s_hat),
-        stall_margin=Float64(aero_out.stall_margin),
-        incidence=Float64(aero_out.diagnostics.incidence),
-        deviation=Float64(aero_out.diagnostics.deviation),
-        theta_in=Float64(aero_out.diagnostics.theta_in),
-        theta_out=Float64(aero_out.diagnostics.theta_out),
-        valid=Bool(aero_out.valid),
-        stall=stall,
+        omega_row=row.speed_ratio_to_ref * omega,
+        U=U,
+        Vx_in=st_in.Vx,
+        Vx_out=st_out.Vx,
+        Vtheta_in=st_in.Vtheta,
+        Vtheta_out=st_out.Vtheta,
+        delta_Vtheta=st_out.Vtheta - st_in.Vtheta,
+        Wtheta_in=Wtheta_in,
+        Wtheta_out=Wtheta_out,
+        W_in=Win,
+        W_out=Wout,
+        WMach_in=(_positive_finite(a_in) ? Win / a_in : NaN),
+        WMach_out=(_positive_finite(a_out) ? Wout / a_out : NaN),
+        alpha_in=atan(st_in.Vtheta, st_in.Vx),
+        alpha_out=atan(st_out.Vtheta, st_out.Vx),
+        beta_in=atan(Wtheta_in, st_in.Vx),
+        beta_out=atan(Wtheta_out, st_out.Vx),
+        pt_t_in=st_in.pt_t,
+        pt_t_out=st_out.pt_t,
+        pt_t_ratio=st_out.pt_t / st_in.pt_t,
+        ht_t_in=st_in.ht_t,
+        ht_t_out=st_out.ht_t,
+        Tt_ratio=st_out.Tt / st_in.Tt,
+        delta_ht=delta_ht,
+        euler_work=U * (st_out.Vtheta - st_in.Vtheta),
+        energy_balance_error=delta_ht - U * (st_out.Vtheta - st_in.Vtheta),
+        h_in=st_in.h,
+        h_out=st_out.h,
+        delta_h=st_out.h - st_in.h,
+        p_in=st_in.p,
+        p_out=st_out.p,
+        p_ratio_row=st_out.p / st_in.p,
+        Mach_in=st_in.Mach,
+        Mach_out=st_out.Mach,
+        thermo_efficiency=row_thermo_efficiency,
+        psi_row=abs(U) > 1e-9 ? delta_ht / (U^2) : NaN,
+        stator_loss_coefficient=stator_loss_coefficient,
+        k_theta_exit=k_theta_exit,
+        delta_s_t=delta_s_t,
+        stall_margin=aero_out.stall_margin,
+        incidence=aero_out.diagnostics.incidence,
+        deviation=aero_out.diagnostics.deviation,
+        theta_in=aero_out.diagnostics.theta_in,
+        theta_out=aero_out.diagnostics.theta_out,
+        valid=st_out.valid,
+        stall=st_out.stall,
+        choke=st_out.choke,
+    )
+end
+
+function _advance_row_dimensional(
+    model::AxialMachineModel,
+    eos::Fluids.AbstractEOS,
+    row::AxialRow,
+    streamtube_radii::AbstractVector{<:Real},
+    row_radius::Float64,
+    station_index::Int,
+    inlet_state::StreamtubeStationState,
+    omega::Float64,
+    mdot::Float64,
+)
+    # Evaluate the blade-row closure at the current inlet state. This supplies
+    # the exit flow angle and the modeled stagnation-entropy rise used to
+    # advance the downstream total state.
+    U = row.speed_ratio_to_ref * omega * row_radius
+    aero_out = blade_aero(
+        row.aero,
+        row.theta_metal_in,
+        row.theta_metal_out,
+        inlet_state.Vx,
+        inlet_state.Vtheta,
+        U,
+    )
+    stall = (aero_out.stall_margin <= 0) || !aero_out.valid
+    if !aero_out.valid
+        # The row model itself rejected the inlet condition, so return an invalid
+        # row result immediately while preserving the diagnostic payload.
+        return (
+            aero_out=aero_out,
+            choke=false,
+            outlet_candidates=StreamtubeStationState[],
+        )
+    end
+
+    if !isfinite(inlet_state.s_t)
+        return (
+            aero_out=aero_out,
+            choke=false,
+            outlet_candidates=StreamtubeStationState[],
+        )
+    end
+
+    k_theta_exit = tan(Float64(aero_out.theta_out))
+    delta_s_t = Float64(aero_out.delta_s_t)
+    roots = _solve_row_Vx_roots(
+        eos,
+        mdot,
+        _station_radius(model, streamtube_radii, station_index + 1),
+        inlet_state.ht_t,
+        inlet_state.Vtheta,
+        U,
+        k_theta_exit,
+        inlet_state.s_t,
+        delta_s_t,
+        station_area(model, station_index + 1),
+    )
+    if isempty(roots)
+        return (
+            aero_out=aero_out,
+            choke=true,
+            outlet_candidates=StreamtubeStationState[],
+        )
+    end
+
+    # Reconstruct the full outlet state for every root, then filter out roots
+    # that violate hard physical admissibility constraints. Branch selection is
+    # handled one level up in `streamtube_solve`.
+    area_out = station_area(model, station_index + 1)
+    radius_out = _station_radius(model, streamtube_radii, station_index + 1)
+    outlet_candidates = StreamtubeStationState[]
+    for Vx_out in roots
+        outlet = _row_outlet_state_from_Vx(
+            eos,
+            mdot,
+            radius_out,
+            inlet_state.ht_t,
+            inlet_state.Vtheta,
+            U,
+            k_theta_exit,
+            inlet_state.s_t,
+            delta_s_t,
+            area_out,
+            Vx_out,
+        )
+        _is_physically_admissible_outlet(outlet) || continue
+        push!(outlet_candidates, outlet)
+    end
+
+    return (
+        aero_out=aero_out,
         choke=false,
+        outlet_candidates=outlet_candidates,
     )
-    aero_out.valid || return (converged=false, choke=false, stall=stall, diagnostics=diagnostics_base)
-
-    # Compute nu_x at the row exit from blade aerodynamics and mass flow constraint.
-    nu_x_solve = _solve_row_nu_x(
-        model,
-        station_in,
-        station_out,
-        mu,
-        tau,
-        pi,
-        nu_theta,
-        nu_u,
-        Float64(aero_out.k_theta_exit),
-        Float64(aero_out.delta_s_hat),
-        prefer_root,
-    )
-    nu_x_solve.converged || return (
-        converged=false,
-        choke=nu_x_solve.choke,
-        stall=stall,
-        diagnostics=merge(diagnostics_base, (choke=nu_x_solve.choke,)),
-    )
-    nu_x_out = nu_x_solve.nu_x
-
-    # Calculate incrase in enthalpy
-    gamma_ratio = model.gamma / (model.gamma - 1)
-    nu_theta_out = nu_u + nu_x_out * aero_out.k_theta_exit
-    tau_out = tau_in + (model.gamma - 1) * nu_u * (nu_theta_out - nu_theta_in)
-    tau_out > 0 || return (converged=false, choke=false, stall=stall, diagnostics=diagnostics_base)
-
-    # Calculate increase in pressure ratio
-    pi_out = (tau_out / tau_in)^gamma_ratio *
-             pi_in * exp(-gamma_ratio * aero_out.delta_s_hat)
-
-    nu_theta[station_out] = nu_theta_out
-    tau[station_out] = tau_out
-    pi[station_out] = pi_out
-    nu_x[station_out] = nu_x_out
-    diagnostics = merge(
-        diagnostics_base,
-        (
-            nu_x_out=nu_x_out,
-            nu_theta_out=nu_theta_out,
-            delta_nu_theta=nu_theta_out - nu_theta_in,
-            tau_out=tau_out,
-            delta_tau=tau_out - tau_in,
-            pi_out=pi_out,
-            delta_pi=pi_out - pi_in,
-        ),
-    )
-    return (converged=true, choke=false, stall=stall, diagnostics=diagnostics)
 end
 
 """
-    streamtube_solve(model, streamtube_radii, m_tip, nu_x_inlet, nu_theta_inlet; prefer_root=:low)
+    streamtube_solve(model, eos, streamtube_radii, pt_in, ht_in, omega, Vx_inlet, Vtheta_inlet; prefer_root=:low)
 
-Run the axial row-marching solve in non-dimensional coordinates.
+March the axial machine in physical units.
 
-Coordinate/scaling convention:
-- All velocity-like terms are normalized by `a0_ref` (reference inlet acoustic speed).
-  - `nu_x = V_x / a0_ref` (axial component)
-  - `nu_theta = V_theta / a0_ref` (tangential/swirl component)
-  - `nu_u = U / a0_ref` (blade speed, row-dependent)
-- Thermodynamic station states are represented by:
-  - `tau` (non-dimensional total enthalpy/temperature-like state)
-  - `pi` (non-dimensional total pressure ratio state)
-- `mu` is a non-dimensional mass-flow invariant derived from continuity.
+State per station:
+- `pt_t`: total pressure
+- `ht_t`: total enthalpy
+- `Vx`: axial velocity
+- `Vtheta`: tangential velocity
 
-Inputs:
-- `model`: row stack plus gas constants and reference geometry.
-- `streamtube_radii[k]`: physical radius used for row `k`; must lie in that row's
-  `[r_hub, r_tip]`.
-- `m_tip`: reference-speed parameter driving row blade speeds.
-- `nu_x_inlet`, `nu_theta_inlet`: inlet station velocity components in normalized units.
-- `prefer_root`: selects lower or upper branch when scalar continuity has multiple roots.
-
-Outputs include:
-- `PR`: outlet-to-inlet total pressure ratio (`pi_out`)
-- `eta`: total-to-total efficiency proxy from `(pi_out, tau_out)`
-- full station arrays (`tau`, `pi`, `nu_theta`, `nu_x`) and row diagnostics.
+The scalar implicit solve remains, with `Vx` as the unknown at each downstream
+station.
 """
 function streamtube_solve(
     model::AxialMachineModel,
+    eos::Fluids.AbstractEOS,
     streamtube_radii::AbstractVector{<:Real},
-    m_tip::Real,
-    nu_x_inlet::Real,
-    nu_theta_inlet::Real;
+    pt_in::Real,
+    ht_in::Real,
+    omega::Real,
+    Vx_inlet::Real,
+    Vtheta_inlet::Real;
     prefer_root::Symbol=:low,
 )
-    m_tip_f = Float64(m_tip)
-    nu_x_inlet_f = Float64(nu_x_inlet)
+    pt_in_f = Float64(pt_in)
+    ht_in_f = Float64(ht_in)
+    omega_f = Float64(omega)
+    Vx_inlet_f = Float64(Vx_inlet)
+    Vtheta_inlet_f = Float64(Vtheta_inlet)
     n_rows = length(model.rows)
     n_stations = n_rows + 1
-    length(streamtube_radii) == n_rows ||
-        error("streamtube_radii length must match number of rows")
+
+    # Validate the requested streamtube geometry before doing any thermodynamics.
+    # Each row solve assumes the specified streamtube radius lies inside that row's
+    # annulus, because blade speed and station area are evaluated at that radius.
+    length(streamtube_radii) == n_rows || error("streamtube_radii length must match number of rows")
     radii = Float64.(streamtube_radii)
     for (k, row) in pairs(model.rows)
         row.r_hub <= radii[k] <= row.r_tip ||
             error("streamtube_radii[$k]=$(radii[k]) must lie in [r_hub, r_tip]=[$(row.r_hub), $(row.r_tip)]")
     end
-    nu_x_inlet_f > 0 || error("nu_x_inlet must be > 0")
 
-    tau = fill(NaN, n_stations)
-    pi = fill(NaN, n_stations)
-    nu_theta = fill(NaN, n_stations)
-    nu_x = fill(NaN, n_stations)
-    stall_row = falses(n_rows)
-    choke_row = falses(n_rows)
-    valid_row = trues(n_rows)
-    row_data = Vector{NamedTuple}(undef, n_rows)
+    # Reject obviously invalid inlet conditions up front and return a shaped
+    # diagnostic result rather than letting the EOS or row march fail deeper in
+    # the solve.
+    (_positive_finite(pt_in_f) && _positive_finite(ht_in_f) && _positive_finite(Vx_inlet_f)) ||
+        return _invalid_streamtube_result(model, eos, radii; pt_in=pt_in_f, ht_in=ht_in_f, omega=omega_f, mdot=NaN, Vx_inlet=Vx_inlet_f, Vtheta_inlet=Vtheta_inlet_f, stall=true, choke=false)
 
-    tau[1] = 1.0
-    pi[1] = 1.0
-    nu_theta[1] = Float64(nu_theta_inlet)
-    nu_x[1] = nu_x_inlet_f
-    mu = _mass_flow_invariant(model.gamma, 1.0, station_area(model, 1), 1.0, nu_x[1], nu_theta[1])
-    isfinite(mu) || return _invalid_streamtube_result(n_rows; stall=true, choke=true, mu=NaN)
+    # Allocate the physical per-station state. The dimensional march advances a
+    # typed station object and the legacy arrays are derived afterward.
+    stations = [_nan_station_state() for _ in 1:n_stations]
 
+    # Seed station 1 directly from the specified inlet total state and velocity
+    # vector. Mass flow becomes a derived quantity of the inlet station state.
+    inlet = _build_station_state(
+        eos,
+        _station_radius(model, radii, 1),
+        station_area(model, 1),
+        pt_in_f,
+        ht_in_f,
+        Vx_inlet_f,
+        Vtheta_inlet_f,
+        NaN,
+        true,
+        false,
+        false,
+    )
+    mdot_f = inlet.mdot_station
+    _positive_finite(mdot_f) ||
+        return _invalid_streamtube_result(model, eos, radii; pt_in=pt_in_f, ht_in=ht_in_f, omega=omega_f, mdot=mdot_f, Vx_inlet=Vx_inlet_f, Vtheta_inlet=Vtheta_inlet_f, stall=false, choke=true)
+    stations[1] = inlet
+
+    # Cache row aero diagnostics separately. The row march may terminate early on
+    # invalid/choked rows, but the result still needs complete per-row diagnostics
+    # for downstream tooling.
+    aero_cache = Vector{NamedTuple}(undef, n_rows)
+
+    # March row-by-row from inlet to outlet. Each row:
+    # 1. evaluates the blade aero closure at the current inlet state,
+    # 2. uses Euler work to relate Vtheta_out and ht_t_out,
+    # 3. solves a scalar continuity equation for Vx_out,
+    # 4. updates the downstream station total state.
     for k in 1:n_rows
         row = model.rows[k]
-        station_in = k
-        station_out = k + 1
-
-        inlet = _solve_station_nu_x(
-            model.gamma,
-            mu,
-            pi[station_in],
-            station_area(model, station_in),
-            tau[station_in],
-            nu_theta[station_in];
-            prefer=prefer_root,
-        )
-        if !inlet.converged
-            choke_row[k] = true
-            valid_row[k] = false
-            break
-        end
-        nu_x[station_in] = inlet.nu_x
-
-        row_step = _advance_row!(
+        row_step = _advance_row_dimensional(
             model,
+            eos,
             row,
-            row.aero,
+            radii,
             radii[k],
-            station_in,
-            station_out,
-            mu,
-            tau,
-            pi,
-            nu_theta,
-            nu_x,
-            m_tip_f,
-            prefer_root,
+            k,
+            stations[k],
+            omega_f,
+            mdot_f,
         )
-        stall_row[k] = row_step.stall
-        row_data[k] = row_step.diagnostics
-        if !row_step.converged
-            choke_row[k] = row_step.choke
-            valid_row[k] = false
+        aero_cache[k] = row_step.aero_out
+
+        selected_outlet = _select_outlet_candidate(row_step.outlet_candidates, prefer_root)
+        if isnothing(selected_outlet)
             break
         end
+
+        stations[k + 1] = _with_station_flags(
+            selected_outlet;
+            valid=true,
+            stall=(row_step.aero_out.stall_margin <= 0) || !row_step.aero_out.valid,
+            choke=row_step.choke,
+        )
     end
 
+    # Fill any rows skipped after an early termination with placeholder aero
+    # diagnostics so consumers can still render a complete machine layout.
     for k in 1:n_rows
-        if !isassigned(row_data, k)
-            row = model.rows[k]
-            station_in = k
-            station_out = k + 1
-            area_in = station_area(model, station_in)
-            area_out = station_area(model, station_out)
-            row_data[k] = (
-                row_index=k,
-                station_in=station_in,
-                station_out=station_out,
-                r_hub=row.r_hub,
-                r_tip=row.r_tip,
-                row_radius=radii[k],
-                row_annulus_area=row_annulus_area(row),
-                area_in=area_in,
-                area_out=area_out,
-                theta_metal_in=row.theta_metal_in,
-                theta_metal_out=row.theta_metal_out,
-                speed_ratio_to_ref=row.speed_ratio_to_ref,
-                nu_u=row.speed_ratio_to_ref * m_tip_f * radii[k] / model.r_tip_ref,
-                nu_x_in=nu_x[station_in],
-                nu_x_out=nu_x[station_out],
-                nu_theta_in=nu_theta[station_in],
-                nu_theta_out=nu_theta[station_out],
-                delta_nu_theta=NaN,
-                tau_in=tau[station_in],
-                tau_out=tau[station_out],
-                delta_tau=NaN,
-                pi_in=pi[station_in],
-                pi_out=pi[station_out],
-                delta_pi=NaN,
+        if !isassigned(aero_cache, k)
+            aero_cache[k] = (
                 k_theta_exit=NaN,
-                delta_s_hat=NaN,
+                delta_s_t=NaN,
                 stall_margin=NaN,
-                incidence=NaN,
-                deviation=NaN,
-                theta_in=NaN,
-                theta_out=NaN,
                 valid=false,
-                stall=false,
-                choke=false,
+                diagnostics=(
+                    incidence=NaN,
+                    deviation=NaN,
+                    theta_in=NaN,
+                    theta_out=NaN,
+                    theta_metal_in=model.rows[k].theta_metal_in,
+                    theta_metal_out=model.rows[k].theta_metal_out,
+                ),
             )
         end
     end
 
-    station_data = _build_station_data(model, radii, tau, pi, nu_theta, nu_x)
-
-    model_valid = all(valid_row)
-    model_choke = any(choke_row)
-    model_stall = any(stall_row)
-    if !model_valid
-        return (
-            PR=NaN,
-            eta=NaN,
-            stall=model_stall,
-            choke=model_choke,
-            valid=false,
-            mu=mu,
-            tau=tau,
-            pi=pi,
-            nu_theta=nu_theta,
-            nu_x=nu_x,
-            stall_row=stall_row,
-            choke_row=choke_row,
-            valid_row=valid_row,
-            station_data=station_data,
-            row_data=row_data,
+    # Reconstruct full station diagnostics directly from the dimensional marched
+    # state, then derive row diagnostics from adjacent stations plus the cached
+    # aero / row-core solve data.
+    pt_t = [st.pt_t for st in stations]
+    ht_t = [st.ht_t for st in stations]
+    Vtheta = [st.Vtheta for st in stations]
+    Vx = [st.Vx for st in stations]
+    row_data = Vector{NamedTuple}(undef, n_rows)
+    for k in 1:n_rows
+        row_data[k] = _build_row_data(
+            eos,
+            model.rows[k],
+            k,
+            radii[k],
+            omega_f,
+            aero_cache[k],
+            stations[k],
+            stations[k + 1],
         )
     end
 
-    tau_out = tau[end]
-    pi_out = pi[end]
-    eta_tt = if (tau_out > 0) && (pi_out > 0)
-        tau_is_out = pi_out^((model.gamma - 1) / model.gamma)
-        d_actual = tau_out - 1
-        d_is = tau_is_out - 1
-        eta = if abs(d_actual) <= 1e-12 || abs(d_is) <= 1e-12
-            NaN
-        elseif signbit(d_actual) != signbit(d_is)
-            NaN
-        elseif d_actual > 0
-            d_is / d_actual
-        else
-            d_actual / d_is
-        end
-        isfinite(eta) ? eta : NaN
-    else
-        NaN
-    end
-    return (
-        PR=pi_out,
-        eta=eta_tt,
-        stall=model_stall,
-        choke=model_choke,
-        valid=model_valid && isfinite(pi_out) && (pi_out > 0) && isfinite(eta_tt),
-        mu=mu,
-        tau=tau,
-        pi=pi,
-        nu_theta=nu_theta,
-        nu_x=nu_x,
-        stall_row=stall_row,
-        choke_row=choke_row,
-        valid_row=valid_row,
-        station_data=station_data,
-        row_data=row_data,
+    # Collapse the row-wise diagnostics to machine-level validity and performance
+    # metrics. Efficiency is now taken directly from the EOS-based thermo
+    # calculation rather than a separate nondimensional proxy.
+    model_valid = all(st.valid for st in stations[2:end]) && all(isfinite.(pt_t)) && all(isfinite.(ht_t)) && all(isfinite.(Vx)) && all(isfinite.(Vtheta))
+    model_stall = any(st.stall for st in stations[2:end])
+    model_choke = any(st.choke for st in stations[2:end])
+    pressure_ratio = pt_t[end] / pt_t[1]
+    thermo_eta = _thermo_efficiency(eos, pt_t[1], ht_t[1], pt_t[end], ht_t[end])
+    eta = thermo_eta
+    return StreamtubeSolveResult(
+        pressure_ratio,
+        eta,
+        thermo_eta,
+        model_valid && isfinite(pressure_ratio) && pressure_ratio > 0 && isfinite(eta),
+        model_stall,
+        model_choke,
+        stations,
+        row_data,
+        (
+            pt_in=pt_in_f,
+            ht_in=ht_in_f,
+            omega=omega_f,
+            mdot=mdot_f,
+            Vx_inlet=Vx_inlet_f,
+            Vtheta_inlet=Vtheta_inlet_f,
+            streamtube_radii=radii,
+        ),
     )
 end
 
-"""
-    streamtube_solve_with_phi(model, m_tip, phi_in; streamtube_radii=meanline_radii(model), nu_theta_inlet=0.0, prefer_root=:low)
-
-Phi-facing convenience wrapper around the nu_x-native solver.
-"""
-function streamtube_solve_with_phi(
+function streamtube_solve_from_mdot(
     model::AxialMachineModel,
-    m_tip::Real,
-    phi_in::Real;
-    streamtube_radii::AbstractVector{<:Real}=meanline_radii(model),
-    nu_theta_inlet::Real=0.0,
+    eos::Fluids.AbstractEOS,
+    streamtube_radii::AbstractVector{<:Real},
+    pt_in::Real,
+    ht_in::Real,
+    omega::Real,
+    mdot::Real,
+    Vtheta_inlet::Real;
     prefer_root::Symbol=:low,
 )
-    m_tip_f = Float64(m_tip)
-    phi_in_f = Float64(phi_in)
-    # The phi wrapper uses the model's explicit flow-reference speed/radius
-    # to map flow coefficient to inlet axial velocity:
-    #   phi_in = nu_x_inlet / |nu_u_ref|  =>  nu_x_inlet = phi_in * |nu_u_ref|
-    # where nu_u_ref is the non-dimensional blade speed at `r_flow_ref`.
-    nu_u_ref = model.speed_ratio_ref * m_tip_f * model.r_flow_ref / model.r_tip_ref
-    abs(nu_u_ref) > 0 || return _invalid_streamtube_result(length(model.rows); stall=true, choke=true)
-    nu_x_inlet = phi_in_f * abs(nu_u_ref)
+    pt_in_f = Float64(pt_in)
+    ht_in_f = Float64(ht_in)
+    omega_f = Float64(omega)
+    mdot_f = Float64(mdot)
+    Vtheta_inlet_f = Float64(Vtheta_inlet)
+    radii = Float64.(streamtube_radii)
+
+    (_positive_finite(pt_in_f) && _positive_finite(ht_in_f) && _positive_finite(mdot_f)) ||
+        return _invalid_streamtube_result(model, eos, radii; pt_in=pt_in_f, ht_in=ht_in_f, omega=omega_f, mdot=mdot_f, Vx_inlet=NaN, Vtheta_inlet=Vtheta_inlet_f, stall=true, choke=false)
+
+    inlet = _solve_station_Vx(
+        eos,
+        mdot_f,
+        pt_in_f,
+        ht_in_f,
+        _safe_entropy(eos, pt_in_f, ht_in_f),
+        station_area(model, 1),
+        Vtheta_inlet_f;
+        prefer=prefer_root,
+    )
+    inlet.converged ||
+        return _invalid_streamtube_result(model, eos, radii; pt_in=pt_in_f, ht_in=ht_in_f, omega=omega_f, mdot=mdot_f, Vx_inlet=NaN, Vtheta_inlet=Vtheta_inlet_f, stall=false, choke=true)
+
     return streamtube_solve(
         model,
-        streamtube_radii,
-        m_tip_f,
-        nu_x_inlet,
-        Float64(nu_theta_inlet);
+        eos,
+        radii,
+        pt_in_f,
+        ht_in_f,
+        omega_f,
+        inlet.Vx,
+        Vtheta_inlet_f;
         prefer_root=prefer_root,
     )
-end
-
-function _nearest_feasible_flow_sample(
-    model::AxialMachineModel,
-    speed::Float64,
-    flow_target::Float64,
-    flow_lo::Float64,
-    flow_hi::Float64,
-    streamtube_radii::AbstractVector{<:Real},
-    nu_theta_inlet::Float64,
-    prefer_root::Symbol,
-    is_feasible::Function;
-    n_probe::Int=61,
-)
-    flow_min = min(flow_lo, flow_hi)
-    flow_max = max(flow_lo, flow_hi)
-    n_probe >= 3 || error("n_probe must be >= 3")
-    probe = collect(range(flow_min, flow_max, length=n_probe))
-    push!(probe, flow_target)
-    sort!(probe)
-
-    best_dist = Inf
-    best_flow = NaN
-    best_vals = nothing
-    for flow in probe
-        vals = streamtube_solve_with_phi(
-            model,
-            speed,
-            flow;
-            streamtube_radii=streamtube_radii,
-            nu_theta_inlet=nu_theta_inlet,
-            prefer_root=prefer_root,
-        )
-        if is_feasible(vals)
-            dist = abs(flow - flow_target)
-            if dist < best_dist
-                best_dist = dist
-                best_flow = flow
-                best_vals = vals
-            end
-        end
-    end
-
-    return (
-        found=(best_vals !== nothing),
-        flow=best_flow,
-        vals=best_vals,
-    )
-end
-
-"""
-    sample_streamtube_solve(model, speed_grid, flow_grid; flow_min=nothing, flow_max=nothing, streamtube_radii=meanline_radii(model), nu_theta_inlet=0.0, prefer_root=:low, is_feasible)
-
-Sample the phi-facing streamtube solver over a Cartesian grid of speed/flow coordinates.
-"""
-function sample_streamtube_solve(
-    model::AxialMachineModel,
-    speed_grid::AbstractVector{<:Real},
-    flow_grid::AbstractVector{<:Real};
-    flow_min::Union{Nothing,AbstractVector{<:Real}}=nothing,
-    flow_max::Union{Nothing,AbstractVector{<:Real}}=nothing,
-    streamtube_radii::AbstractVector{<:Real}=meanline_radii(model),
-    nu_theta_inlet::Real=0.0,
-    prefer_root::Symbol=:low,
-    is_feasible::Function=(vals -> vals.valid && isfinite(vals.PR) && isfinite(vals.eta)),
-)
-    length(speed_grid) >= 1 || error("speed_grid must be non-empty")
-    length(flow_grid) >= 1 || error("flow_grid must be non-empty")
-
-    has_limits = !isnothing(flow_min) || !isnothing(flow_max)
-    if has_limits
-        isnothing(flow_min) && error("flow_min must be provided when using flow limits")
-        isnothing(flow_max) && error("flow_max must be provided when using flow limits")
-        length(flow_min) == length(speed_grid) || error("flow_min length must match speed_grid")
-        length(flow_max) == length(speed_grid) || error("flow_max length must match speed_grid")
-    end
-
-    pr_table = Matrix{Float64}(undef, length(speed_grid), length(flow_grid))
-    eta_table = Matrix{Float64}(undef, length(speed_grid), length(flow_grid))
-
-    for (i, speed_raw) in pairs(speed_grid)
-        speed = Float64(speed_raw)
-        for (j, flow_raw) in pairs(flow_grid)
-            flow = Float64(flow_raw)
-            if has_limits
-                flow = clamp(flow, Float64(flow_min[i]), Float64(flow_max[i]))
-            end
-            vals = streamtube_solve_with_phi(
-                model,
-                speed,
-                flow;
-                streamtube_radii=streamtube_radii,
-                nu_theta_inlet=nu_theta_inlet,
-                prefer_root=prefer_root,
-            )
-            if !is_feasible(vals)
-                if has_limits
-                    lo = Float64(flow_min[i])
-                    hi = Float64(flow_max[i])
-                    repaired = _nearest_feasible_flow_sample(
-                        model,
-                        speed,
-                        flow,
-                        lo,
-                        hi,
-                        streamtube_radii,
-                        Float64(nu_theta_inlet),
-                        prefer_root,
-                        is_feasible;
-                        n_probe=61,
-                    )
-                    if repaired.found
-                        flow = repaired.flow
-                        vals = repaired.vals
-                    end
-                end
-            end
-            is_feasible(vals) ||
-                error("streamtube sampling produced invalid value at speed=$(speed), flow=$(flow), limits=[$(has_limits ? flow_min[i] : NaN), $(has_limits ? flow_max[i] : NaN)]")
-            pr_table[i, j] = vals.PR
-            eta_table[i, j] = vals.eta
-        end
-    end
-
-    return (pr_table=pr_table, eta_table=eta_table)
 end
