@@ -47,8 +47,8 @@ function _build_parser()
             help = "shaft speed [rad/s]"
             arg_type = Float64
             required = true
-        "--mdot"
-            help = "mass flow [kg/s]"
+        "--vx-inlet"
+            help = "inlet axial velocity [m/s]"
             arg_type = Float64
             required = true
         "--vtheta-inlet"
@@ -113,11 +113,94 @@ function _print_table(io::IO, title::AbstractString, rows::AbstractVector{<:Name
     println(io)
 end
 
-function _convert_angle_columns(rows::AbstractVector{<:NamedTuple}, angle_cols::Vector{Symbol})
+_row_as_named_tuple(row) = (; (name => getproperty(row, name) for name in propertynames(row))...)
+
+function _convert_angle_columns(rows::AbstractVector, angle_cols::Vector{Symbol})
     return [
         begin
+            base = _row_as_named_tuple(row)
             updates = (; (Symbol(String(col) * "_deg") => getproperty(row, col) * RAD2DEG for col in angle_cols)...)
-            merge(row, updates)
+            merge(base, updates)
+        end
+        for row in rows
+    ]
+end
+
+function _thermo_efficiency_row(eos, pt_in, ht_in, pt_out, ht_out, U)
+    abs(U) > 1e-9 || return NaN
+    if !(isfinite(pt_in) && isfinite(ht_in) && isfinite(pt_out) && isfinite(ht_out))
+        return NaN
+    end
+    if pt_in <= 0 || pt_out <= 0
+        return NaN
+    end
+    h2s = Fluids.isentropic_enthalpy(eos, pt_in, ht_in, pt_out)
+    if pt_out >= pt_in
+        denom = ht_out - ht_in
+        return abs(denom) > 1e-12 ? (h2s - ht_in) / denom : NaN
+    end
+    denom = ht_in - h2s
+    return abs(denom) > 1e-12 ? (ht_in - ht_out) / denom : NaN
+end
+
+function _row_display_rows(model, eos, inputs::NamedTuple, stations, rows)
+    radii = inputs.streamtube_radii
+    omega = inputs.omega
+    return [
+        begin
+            row_model = model.rows[row.row_index]
+            st_in = stations[row.row_index]
+            st_out = stations[row.row_index + 1]
+            row_radius = Axial.row_streamtube_radius(radii, row.row_index)
+            U = Axial.row_angular_speed(row_model, omega) * row_radius
+            Wtheta_in = st_in.Vtheta - U
+            Wtheta_out = st_out.Vtheta - U
+            W_in = sqrt(st_in.Vx^2 + Wtheta_in^2)
+            W_out = sqrt(st_out.Vx^2 + Wtheta_out^2)
+            q_in = (isfinite(st_in.rho) && st_in.rho > 0 && isfinite(st_in.V)) ? 0.5 * st_in.rho * st_in.V^2 : NaN
+            merge(
+                _row_as_named_tuple(row),
+                (
+                    r_hub=row_model.r_hub,
+                    r_tip=row_model.r_tip,
+                    row_radius=row_radius,
+                    omega_row=Axial.row_angular_speed(row_model, omega),
+                    U=U,
+                    theta_metal_in=row_model.theta_metal_in,
+                    theta_metal_out=row_model.theta_metal_out,
+                    theta_in=row.aero.theta_in,
+                    theta_out=row.aero.theta_out,
+                    regime=row.aero.regime,
+                    incidence=row.aero.incidence,
+                    deviation=row.aero.deviation,
+                    delta_s_t=row.aero.delta_s_t,
+                    stall_margin=row.aero.stall_margin,
+                    n_outlet_candidates=length(row.outlet_candidates),
+                    selected_candidate_index=row.selected_candidate_index,
+                    valid=st_out.valid,
+                    stall=st_out.stall,
+                    Vx_in=st_in.Vx,
+                    Vx_out=st_out.Vx,
+                    Vtheta_in=st_in.Vtheta,
+                    Vtheta_out=st_out.Vtheta,
+                    W_in=W_in,
+                    W_out=W_out,
+                    WMach_in=(isfinite(st_in.a) && st_in.a > 0) ? W_in / st_in.a : NaN,
+                    WMach_out=(isfinite(st_out.a) && st_out.a > 0) ? W_out / st_out.a : NaN,
+                    alpha_in=atan(st_in.Vtheta, st_in.Vx),
+                    alpha_out=atan(st_out.Vtheta, st_out.Vx),
+                    beta_in=atan(Wtheta_in, st_in.Vx),
+                    beta_out=atan(Wtheta_out, st_out.Vx),
+                    delta_ht=st_out.ht_t - st_in.ht_t,
+                    euler_work=U * (st_out.Vtheta - st_in.Vtheta),
+                    thermo_efficiency=_thermo_efficiency_row(eos, st_in.pt_t, st_in.ht_t, st_out.pt_t, st_out.ht_t, U),
+                    psi_row=abs(U) > 1e-9 ? (st_out.ht_t - st_in.ht_t) / (U^2) : NaN,
+                    pt_t_ratio=st_out.pt_t / st_in.pt_t,
+                    Tt_ratio=st_out.Tt / st_in.Tt,
+                    p_ratio_row=st_out.p / st_in.p,
+                    stator_loss_coefficient=(abs(U) <= 1e-9 && isfinite(q_in) && q_in > 1e-9) ? (st_in.pt_t - st_out.pt_t) / q_in : NaN,
+                ),
+            )
         end
         for row in rows
     ]
@@ -135,7 +218,7 @@ function _main(args::Vector{String}=ARGS)
     Tt_in = Float64(parsed["tt-in"])
     ht_in = Fluids.enthalpy_from_temperature(eos, Tt_in)
     omega = Float64(parsed["omega"])
-    mdot = Float64(parsed["mdot"])
+    Vx_inlet = Float64(parsed["vx-inlet"])
 
     diagnostics = TM.diagnose_axial_operating_point(
         model,
@@ -143,7 +226,7 @@ function _main(args::Vector{String}=ARGS)
         pt_in=pt_in,
         ht_in=ht_in,
         omega=omega,
-        mdot=mdot,
+        Vx_inlet=Vx_inlet,
         Vtheta_inlet=Float64(parsed["vtheta-inlet"]),
         prefer_root=prefer_root,
     )
@@ -167,14 +250,14 @@ function _main(args::Vector{String}=ARGS)
         [:station_index, :radius, :area, :Tt, :pt_t, :T, :p, :rho, :ht_t, :h, :Vx, :Vtheta, :V, :Mach, :mdot_station, :mdot_error],
         )
         phys_row_display = _convert_angle_columns(
-            diagnostics.physical.row_data,
-            [:incidence, :deviation, :theta_metal_in, :theta_metal_out, :alpha_in, :alpha_out, :beta_in, :beta_out],
+            _row_display_rows(model, eos, diagnostics.inputs, diagnostics.physical.station_data, diagnostics.physical.row_data),
+            [:incidence, :deviation, :theta_metal_in, :theta_metal_out, :theta_in, :theta_out, :alpha_in, :alpha_out, :beta_in, :beta_out],
         )
         _print_table(
         io,
         "Row Diagnostics (Physical)",
         phys_row_display,
-        [:row_index, :r_hub, :r_tip, :row_radius, :omega_row, :U, :incidence_deg, :deviation_deg, :theta_metal_in_deg, :theta_metal_out_deg, :alpha_in_deg, :alpha_out_deg, :beta_in_deg, :beta_out_deg, :Vx_in, :Vx_out, :Vtheta_in, :Vtheta_out, :W_in, :W_out, :WMach_in, :WMach_out, :ht_t_in, :ht_t_out, :delta_ht, :h_in, :h_out, :delta_h, :euler_work, :energy_balance_error, :psi_row, :thermo_efficiency, :pt_t_ratio, :Tt_ratio, :p_ratio_row, :stator_loss_coefficient, :pt_t_in, :pt_t_out, :p_in, :p_out, :Mach_in, :Mach_out, :valid, :stall, :choke],
+        [:row_index, :n_outlet_candidates, :selected_candidate_index, :regime, :r_hub, :r_tip, :row_radius, :omega_row, :U, :theta_metal_in_deg, :theta_metal_out_deg, :theta_in_deg, :theta_out_deg, :incidence_deg, :deviation_deg, :delta_s_t, :stall_margin, :Vx_in, :Vx_out, :Vtheta_in, :Vtheta_out, :W_in, :W_out, :WMach_in, :WMach_out, :alpha_in_deg, :alpha_out_deg, :beta_in_deg, :beta_out_deg, :delta_ht, :euler_work, :psi_row, :thermo_efficiency, :pt_t_ratio, :Tt_ratio, :p_ratio_row, :stator_loss_coefficient, :valid, :stall, :choke],
         )
     finally
         io === stdout || close(io)

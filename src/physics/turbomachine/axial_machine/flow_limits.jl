@@ -1,14 +1,15 @@
 """
-    feasible_flow_limits(model, eos, speed_grid, flow_lo, flow_hi; pt_in, ht_in, boundary_resolution=401, streamtube_radii=meanline_radii(model), Vtheta_inlet=0.0, prefer_root=:low, is_feasible)
+    feasible_flow_limits(model, eos, speed_grid, Vx_lo, Vx_hi; pt_in, ht_in, boundary_resolution=401, streamtube_radii=meanline_radii(model), Vtheta_inlet=0.0, prefer_root=:low, is_feasible)
 
-Scan physical inlet mass flow at each physical shaft speed and return feasible-flow bounds.
+Scan physical inlet axial velocity at each physical shaft speed and return
+feasible inlet-velocity bounds, along with the projected mass-flow bounds.
 """
 function feasible_flow_limits(
     model::AxialMachineModel,
     eos::Fluids.AbstractEOS,
     speed_grid::AbstractVector{<:Real},
-    flow_lo::Real,
-    flow_hi::Real;
+    Vx_lo::Real,
+    Vx_hi::Real;
     pt_in::Real,
     ht_in::Real,
     boundary_resolution::Int=401,
@@ -18,42 +19,50 @@ function feasible_flow_limits(
     is_feasible::Function=(result -> getproperty(result, :valid)),
 )
     boundary_resolution >= 2 || error("boundary_resolution must be >= 2")
-    flow_hi > flow_lo || error("flow_hi must be > flow_lo")
+    Vx_hi > Vx_lo || error("Vx_hi must be > Vx_lo")
     length(speed_grid) >= 1 || error("speed_grid must be non-empty")
 
-    flow_probe = collect(range(Float64(flow_lo), Float64(flow_hi), length=boundary_resolution))
+    Vx_probe = collect(range(Float64(Vx_lo), Float64(Vx_hi), length=boundary_resolution))
     valid_speed_idx = Int[]
-    flow_min = Float64[]
-    flow_max = Float64[]
+    Vx_min = Float64[]
+    Vx_max = Float64[]
+    mdot_min = Float64[]
+    mdot_max = Float64[]
 
     for (i, speed_raw) in pairs(speed_grid)
         speed = Float64(speed_raw)
-        feasible_flows = Float64[]
-        for flow in flow_probe
-            result = streamtube_solve_from_mdot(
+        feasible_Vx = Float64[]
+        feasible_mdot = Float64[]
+        for Vx in Vx_probe
+            result = streamtube_solve(
                 model,
                 eos,
                 streamtube_radii,
                 Float64(pt_in),
                 Float64(ht_in),
                 speed,
-                flow,
+                Vx,
                 Float64(Vtheta_inlet);
                 prefer_root=prefer_root,
             )
             if is_feasible(result)
-                push!(feasible_flows, flow)
+                push!(feasible_Vx, Vx)
+                push!(feasible_mdot, result.stations[1].mdot_station)
             end
         end
-        isempty(feasible_flows) && continue
+        isempty(feasible_Vx) && continue
         push!(valid_speed_idx, i)
-        push!(flow_min, first(feasible_flows))
-        push!(flow_max, last(feasible_flows))
+        push!(Vx_min, first(feasible_Vx))
+        push!(Vx_max, last(feasible_Vx))
+        push!(mdot_min, first(feasible_mdot))
+        push!(mdot_max, last(feasible_mdot))
     end
 
     return (
         valid_speed_idx=valid_speed_idx,
-        flow_min=flow_min,
-        flow_max=flow_max,
+        Vx_min=Vx_min,
+        Vx_max=Vx_max,
+        mdot_min=mdot_min,
+        mdot_max=mdot_max,
     )
 end

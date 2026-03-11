@@ -1,5 +1,7 @@
 module Fluids
 
+using ...Utility: bracket_bisect_roots
+
 include("EOS/equations_of_state.jl")
 include("EOS/ideal_gas.jl")
 include("EOS/air.jl")
@@ -19,6 +21,6 @@ export phase, enthalpy_from_pressure_entropy, pressure_from_enthalpy_entropy, is
 export static_temperature_from_total, total_temperature_from_static
 export static_pressure_from_total, total_pressure_from_static
 export static_enthalpy_from_total, total_enthalpy_from_static
-export velocity_from_massflow, velocity_from_ph_mdot
+export velocity_from_massflow, velocity_from_ph_mdot, velocity_from_stagnation_massflow
 
 end # module Fluids

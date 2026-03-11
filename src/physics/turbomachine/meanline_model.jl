@@ -99,14 +99,12 @@ function _resolve_meanline_tabulation_grids(
             Float64(Pt_ref),
         )
         Vx_grid_f = Float64[]
-        s_t_ref = Fluids.entropy(eos, Float64(Pt_in_ref), ht_in_ref)
         for mdot in mdot_grid
-            inlet = AxialMachine._solve_station_Vx(
+            inlet = Fluids.velocity_from_stagnation_massflow(
                 eos,
                 mdot,
                 Float64(Pt_in_ref),
                 ht_in_ref,
-                s_t_ref,
                 inlet_area,
                 Vtheta_inlet_ref;
                 prefer=:low,
@@ -200,9 +198,9 @@ function _compute_feasible_flow_limits(
                 Vtheta_inlet=Float64(Vtheta_inlet),
                 prefer_root=prefer_root,
             )
-            if vals.valid && isfinite(vals.PR) && isfinite(vals.eta) && vals.PR > 0 && isfinite(vals.raw.inputs.mdot)
+            if vals.valid && isfinite(vals.PR) && isfinite(vals.eta) && vals.PR > 0 && isfinite(vals.raw.stations[1].mdot_station)
                 push!(feasible_Vx, Vx)
-                push!(feasible_mdot, vals.raw.inputs.mdot)
+                push!(feasible_mdot, vals.raw.stations[1].mdot_station)
             end
         end
         isempty(feasible_Vx) && continue
@@ -279,7 +277,7 @@ function _sample_meanline_tables(
                     Vx_used=Vx_used,
                     mdot_corr=grids.mdot_corr_grid[j],
                     mdot=grids.mdot_grid[j],
-                    mdot_used=sample.raw.inputs.mdot,
+                    mdot_used=sample.raw.stations[1].mdot_station,
                     PR=sample.PR,
                     eta=sample.eta,
                     valid=sample.valid,

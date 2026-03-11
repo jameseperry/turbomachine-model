@@ -139,6 +139,27 @@ function _package_streamtube_diagnostics(
     )
 end
 
+function _inlet_Vx_from_mdot(
+    model::AxialMachine.AxialMachineModel,
+    eos::Fluids.AbstractEOS,
+    pt_in::Float64,
+    ht_in::Float64,
+    mdot::Float64,
+    Vtheta_inlet::Float64,
+    prefer_root::Symbol,
+)
+    inlet = Fluids.velocity_from_stagnation_massflow(
+        eos,
+        mdot,
+        pt_in,
+        ht_in,
+        AxialMachine.station_area(model, 1),
+        Vtheta_inlet;
+        prefer=prefer_root,
+    )
+    return inlet.converged ? inlet.Vx : NaN
+end
+
 function _stage_diagnostics_from_candidate(
     model::AxialMachine.AxialMachineModel,
     eos::Fluids.AbstractEOS,
@@ -150,14 +171,23 @@ function _stage_diagnostics_from_candidate(
     Vtheta_inlet::Float64,
     prefer_root::Symbol,
 )
-    raw = AxialMachine.streamtube_solve_from_mdot(
+    Vx_inlet = _inlet_Vx_from_mdot(
+        model,
+        eos,
+        pt_in,
+        ht_in,
+        Float64(candidate.mdot),
+        Vtheta_inlet,
+        prefer_root,
+    )
+    raw = AxialMachine.streamtube_solve(
         model,
         eos,
         streamtube_radii,
         pt_in,
         ht_in,
         omega,
-        Float64(candidate.mdot),
+        Vx_inlet,
         Vtheta_inlet;
         prefer_root=prefer_root,
     )
@@ -184,7 +214,8 @@ function _stage_diagnostics_from_candidate(
             pt_in=pt_in,
             ht_in=ht_in,
             omega=omega,
-            mdot=Float64(candidate.mdot),
+            mdot=raw.stations[1].mdot_station,
+            Vx_inlet=raw.stations[1].Vx,
             Vtheta_inlet=Vtheta_inlet,
             streamtube_radii=Float64.(streamtube_radii),
         ),
@@ -215,7 +246,7 @@ function _stage_diagnostics_from_candidate(
 end
 
 """
-    diagnose_axial_operating_point(model, eos; pt_in, ht_in, omega, mdot, streamtube_radii=meanline_radii(model), Vtheta_inlet=0.0, prefer_root=:low)
+    diagnose_axial_operating_point(model, eos; pt_in, ht_in, omega, Vx_inlet, streamtube_radii=meanline_radii(model), Vtheta_inlet=0.0, prefer_root=:low)
 
 Run the axial-machine streamtube solver directly at one physical operating point
 and return detailed row/station data from the dimensional solver.
@@ -226,7 +257,7 @@ function diagnose_axial_operating_point(
     pt_in::Real,
     ht_in::Real,
     omega::Real,
-    mdot::Real,
+    Vx_inlet::Real,
     streamtube_radii::AbstractVector{<:Real}=AxialMachine.meanline_radii(model),
     Vtheta_inlet::Real=0.0,
     prefer_root::Symbol=:low,
@@ -234,20 +265,21 @@ function diagnose_axial_operating_point(
     pt_in_f = Float64(pt_in)
     ht_in_f = Float64(ht_in)
     omega_f = Float64(omega)
-    mdot_f = Float64(mdot)
-    raw = AxialMachine.streamtube_solve_from_mdot(
+    Vx_inlet_f = Float64(Vx_inlet)
+    raw = AxialMachine.streamtube_solve(
         model,
         eos,
         streamtube_radii,
         pt_in_f,
         ht_in_f,
         omega_f,
-        mdot_f,
+        Vx_inlet_f,
         Float64(Vtheta_inlet);
         prefer_root=prefer_root,
     )
     Tt_out = raw.station_data[end].Tt
     ht_out = raw.ht_t[end]
+    mdot_f = raw.stations[1].mdot_station
     tau_shaft = mdot_f * (ht_out - ht_in_f) / _safe_omega_divisor(omega_f)
     power = tau_shaft * omega_f
     thermo_efficiency = _thermo_efficiency(eos, pt_in_f, ht_in_f, raw.pressure_ratio * pt_in_f, ht_out)
@@ -258,6 +290,7 @@ function diagnose_axial_operating_point(
             ht_in=ht_in_f,
             omega=omega_f,
             mdot=mdot_f,
+            Vx_inlet=raw.stations[1].Vx,
             Vtheta_inlet=Float64(Vtheta_inlet),
             streamtube_radii=Float64.(streamtube_radii),
         ),
@@ -319,7 +352,7 @@ function replay_operating_point_with_streamtube(
     pt_in::Real,
     ht_in::Real,
     omega::Real,
-    mdot::Real,
+    Vx_inlet::Real,
     pressure_ratio::Real,
     efficiency::Real,
     ht_out::Real,
@@ -329,25 +362,74 @@ function replay_operating_point_with_streamtube(
     Vtheta_inlet::Real=0.0,
     prefer_root::Symbol=:low,
 )
-    candidate = (
-        branch_coordinate=Float64(mdot),
-        mdot=Float64(mdot),
-        ht_out=Float64(ht_out),
-        tau=Float64(tau),
-        pressure_ratio=Float64(pressure_ratio),
-        efficiency=Float64(efficiency),
-        power=Float64(power),
-    )
-    return replay_operating_point_with_streamtube(
+    pt_in_f = Float64(pt_in)
+    ht_in_f = Float64(ht_in)
+    omega_f = Float64(omega)
+    Vx_inlet_f = Float64(Vx_inlet)
+    Vtheta_inlet_f = Float64(Vtheta_inlet)
+    radii_f = Float64.(streamtube_radii)
+    raw = AxialMachine.streamtube_solve(
         model,
         eos,
-        candidate;
-        pt_in=pt_in,
-        ht_in=ht_in,
-        omega=omega,
-        streamtube_radii=streamtube_radii,
-        Vtheta_inlet=Vtheta_inlet,
+        radii_f,
+        pt_in_f,
+        ht_in_f,
+        omega_f,
+        Vx_inlet_f,
+        Vtheta_inlet_f;
         prefer_root=prefer_root,
+    )
+    ht_out_streamtube = raw.ht_t[end]
+    tau_streamtube = raw.stations[1].mdot_station * (ht_out_streamtube - ht_in_f) / _safe_omega_divisor(omega_f)
+    power_streamtube = tau_streamtube * omega_f
+    operating_point_thermo_efficiency = _thermo_efficiency(
+        eos,
+        pt_in_f,
+        ht_in_f,
+        Float64(pressure_ratio) * pt_in_f,
+        Float64(ht_out),
+    )
+    streamtube_thermo_efficiency = _thermo_efficiency(
+        eos,
+        pt_in_f,
+        ht_in_f,
+        raw.pressure_ratio * pt_in_f,
+        ht_out_streamtube,
+    )
+    return _package_streamtube_diagnostics(
+        raw,
+        (
+            pt_in=pt_in_f,
+            ht_in=ht_in_f,
+            omega=omega_f,
+            mdot=raw.stations[1].mdot_station,
+            Vx_inlet=raw.stations[1].Vx,
+            Vtheta_inlet=Vtheta_inlet_f,
+            streamtube_radii=radii_f,
+        ),
+        (
+            operating_point_pressure_ratio=Float64(pressure_ratio),
+            operating_point_efficiency=Float64(efficiency),
+            operating_point_thermo_efficiency=operating_point_thermo_efficiency,
+            operating_point_ht_out=Float64(ht_out),
+            operating_point_tau=Float64(tau),
+            operating_point_power=Float64(power),
+            streamtube_pressure_ratio=raw.pressure_ratio,
+            streamtube_efficiency=raw.efficiency,
+            streamtube_thermo_efficiency=streamtube_thermo_efficiency,
+            streamtube_ht_out=ht_out_streamtube,
+            streamtube_tau=tau_streamtube,
+            streamtube_power=power_streamtube,
+            pressure_ratio_error=raw.pressure_ratio - Float64(pressure_ratio),
+            efficiency_error=raw.efficiency - Float64(efficiency),
+            thermo_efficiency_error=streamtube_thermo_efficiency - operating_point_thermo_efficiency,
+            ht_out_error=ht_out_streamtube - Float64(ht_out),
+            tau_error=tau_streamtube - Float64(tau),
+            power_error=power_streamtube - Float64(power),
+            valid=raw.valid,
+            stall=raw.stall,
+            choke=raw.choke,
+        ),
     )
 end
 

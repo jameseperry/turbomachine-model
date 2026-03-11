@@ -33,6 +33,44 @@ struct BladeAeroModel{T<:Real}
 end
 
 """
+Result of evaluating the blade aerodynamic closure at one row inlet state.
+
+Field meanings:
+- `theta_out` [rad]:
+  Clamped exit flow angle used by the streamtube march.
+- `theta_out_unclamped` [rad]:
+  Unclamped exit flow angle predicted before applying the hard turning limits.
+- `delta_s_t` [J/(kg*K)]:
+  Modeled stagnation-entropy rise across the row.
+- `stall_margin` [rad]:
+  Signed incidence margin to the configured stall limit. Negative values mean
+  the row is beyond the model's nominal stall incidence envelope.
+- `regime`:
+  Diagnostic flow regime selected by the closure. Currently `:normal` or
+  `:stall`.
+- `incidence` [rad]:
+  Inlet relative flow angle minus metal inlet angle.
+- `deviation` [rad]:
+  Exit flow deviation from the metal exit angle.
+- `theta_in` [rad]:
+  Inlet relative flow angle seen by the blade row.
+- `theta_metal_in`, `theta_metal_out` [rad]:
+  Metal inlet/exit angles used to interpret incidence and deviation.
+"""
+struct BladeAeroResult{T<:Real}
+    theta_out::T
+    theta_out_unclamped::T
+    delta_s_t::T
+    stall_margin::T
+    regime::Symbol
+    incidence::T
+    deviation::T
+    theta_in::T
+    theta_metal_in::T
+    theta_metal_out::T
+end
+
+"""
 Convenience constructor with rotor-like defaults.
 """
 function rotor_aero_model(;
@@ -95,9 +133,11 @@ Inputs:
 
 Returned quantities:
 - `theta_out`: clamped exit flow angle used by the streamtube march
+- `theta_out_unclamped`: raw deviation-model exit flow angle before clamping
 - `delta_s_t`: stagnation-entropy rise across the row [J/(kg*K)]
 - `stall_margin`: incidence margin relative to the configured stall limit
-- `diagnostics`: angles and incidence/deviation terms used by the closure
+- `regime`: symbolic diagnostic regime (`:normal` or `:stall`)
+- `incidence`, `deviation`, `theta_in`: angle diagnostics used by the closure
 """
 function blade_aero(
     model::BladeAeroModel{T},
@@ -114,31 +154,43 @@ function blade_aero(
     # the metal exit angle. Positive deviation reduces the flow exit angle
     # relative to the metal angle.
     incidence = theta_in - theta_metal_in
-    deviation = model.deviation_ref + model.deviation_incidence_sensitivity * incidence
-    theta_out_unclamped = theta_metal_out - deviation
-
-    # Clamp the exit flow angle directly in angle space.
-    theta_out = clamp(theta_out_unclamped, model.theta_min, model.theta_max)
-
-    # Return a dimensional stagnation-entropy rise directly. The streamtube
-    # march can add this to the row inlet stagnation entropy without any cp-based
-    # nondimensional bridge.
-    delta_s_t = model.loss_entropy_base + model.loss_entropy_incidence * incidence^2
     stall_margin = model.stall_incidence_limit - abs(incidence)
-    valid = isfinite(theta_out) && isfinite(delta_s_t)
-    return (
-        theta_out=theta_out,
-        delta_s_t=max(delta_s_t, zero(delta_s_t)),
-        stall_margin=stall_margin,
-        valid=valid,
-        diagnostics=(
-            incidence=incidence,
-            deviation=deviation,
-            theta_in=theta_in,
-            theta_out=theta_out,
-            theta_out_unclamped=theta_out_unclamped,
-            theta_metal_in=theta_metal_in,
-            theta_metal_out=theta_metal_out,
-        ),
+    normal_deviation = model.deviation_ref + model.deviation_incidence_sensitivity * incidence
+    normal_theta_out = theta_metal_out - normal_deviation
+    normal_delta_s_t = model.loss_entropy_base + model.loss_entropy_incidence * incidence^2
+
+    if stall_margin >= zero(stall_margin)
+        regime = :normal
+        theta_out_unclamped = normal_theta_out
+        theta_out = clamp(theta_out_unclamped, model.theta_min, model.theta_max)
+        delta_s_t = normal_delta_s_t
+    else
+        regime = :stall
+        # In stalled flow, collapse turning toward the inlet flow direction and
+        # increase entropy generation sharply as incidence exceeds the limit.
+        overshoot = abs(incidence) - model.stall_incidence_limit
+        overshoot_scale = max(abs(model.stall_incidence_limit), T(1e-6))
+        severity = overshoot / overshoot_scale
+        relax = inv(one(T) + T(3) * severity)
+        theta_out_unclamped = theta_in + relax * (normal_theta_out - theta_in)
+        theta_out = clamp(theta_out_unclamped, model.theta_min, model.theta_max)
+        delta_s_t = max(
+            normal_delta_s_t,
+            (model.loss_entropy_base + model.loss_entropy_incidence * model.stall_incidence_limit^2) *
+            (one(T) + T(8) * severity^2),
+        )
+    end
+    deviation = theta_metal_out - theta_out
+    return BladeAeroResult(
+        theta_out,
+        theta_out_unclamped,
+        max(delta_s_t, zero(delta_s_t)),
+        stall_margin,
+        regime,
+        incidence,
+        deviation,
+        theta_in,
+        theta_metal_in,
+        theta_metal_out,
     )
 end

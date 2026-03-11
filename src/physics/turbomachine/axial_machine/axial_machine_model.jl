@@ -115,10 +115,16 @@ function AxialMachineModel(
 end
 
 function meanline_radii(model::AxialMachineModel)
-    return [0.5 * (row.r_hub + row.r_tip) for row in model.rows]
+    return [row_mean_radius(row) for row in model.rows]
 end
 
+row_mean_radius(row::AxialRow) = 0.5 * (row.r_hub + row.r_tip)
+
 row_annulus_area(row::AxialRow) = pi * (row.r_tip^2 - row.r_hub^2)
+
+row_angular_speed(row::AxialRow, omega_ref::Real) = row.speed_ratio_to_ref * Float64(omega_ref)
+
+row_streamtube_radius(streamtube_radii::AbstractVector{<:Real}, row_index::Integer) = Float64(streamtube_radii[row_index])
 
 function station_area(model::AxialMachineModel, station_index::Integer)
     n_rows = length(model.rows)

@@ -6,6 +6,20 @@
     AM = TP.Turbomachine.AxialMachine
     U = TurboMachineModel.Utility
 
+    inlet_Vx(model, eos, pt_in, ht_in, mdot, Vtheta_inlet) = begin
+        inlet = P.velocity_from_stagnation_massflow(
+            eos,
+            mdot,
+            pt_in,
+            ht_in,
+            AM.station_area(model, 1),
+            Vtheta_inlet;
+            prefer=:low,
+        )
+        @test inlet.converged
+        inlet.Vx
+    end
+
     Tt = 300.0
     Pt = 200_000.0
     M = 0.5
@@ -358,18 +372,8 @@
             boundary_resolution=81,
             want_diagnostics=false,
         )
-        omega_diag = TP.Turbomachine.physical_speed(
-            TP.Turbomachine.tabulated_speed_grid(axial_map)[3],
-            axial_map.Tt_ref,
-            axial_map.Tt_ref,
-        )
-        mdot_diag = TP.Turbomachine.physical_flow(
-            TP.Turbomachine.tabulated_flow_grid(axial_map)[3],
-            axial_map.Tt_ref,
-            axial_map.Pt_ref,
-            axial_map.Tt_ref,
-            axial_map.Pt_ref,
-        )
+        omega_diag = 800.0
+        mdot_diag = 16.0
         axial_vals = TP.Turbomachine.performance_from_stagnation(
             axial_map,
             omega_diag,
@@ -404,15 +408,12 @@
         @test length(replay.physical.station_data) == length(axial_model.rows) + 1
         @test length(replay.physical.row_data) == length(axial_model.rows)
         @test haskey(replay.physical.station_data[1], :pt_t)
-        @test haskey(replay.physical.row_data[1], :alpha_in)
-        @test haskey(replay.physical.row_data[1], :W_in)
-        @test haskey(replay.physical.row_data[1], :omega_row)
-        @test haskey(replay.physical.row_data[1], :delta_ht)
-        @test haskey(replay.physical.row_data[1], :euler_work)
-        @test haskey(replay.physical.row_data[1], :thermo_efficiency)
-        @test haskey(replay.physical.row_data[1], :WMach_in)
-        @test haskey(replay.physical.row_data[1], :psi_row)
-        @test haskey(replay.physical.row_data[1], :stator_loss_coefficient)
+        @test hasproperty(replay.physical.row_data[1], :aero)
+        @test hasproperty(replay.physical.row_data[1], :choke)
+        @test hasproperty(replay.physical.row_data[1], :outlet_candidates)
+        @test hasproperty(replay.physical.row_data[1], :selected_candidate_index)
+        @test hasproperty(replay.physical.row_data[1].aero, :incidence)
+        @test hasproperty(replay.physical.row_data[1].aero, :delta_s_t)
         @test haskey(replay.physical.station_data[1], :mdot_station)
         @test haskey(replay.summary, :pressure_ratio_error)
         @test haskey(replay.summary, :ht_out_error)
@@ -424,7 +425,14 @@
             pt_in=axial_map.Pt_ref,
             ht_in=P.enthalpy_from_temperature(eos, axial_map.Tt_ref),
             omega=omega_diag,
-            mdot=mdot_diag,
+            Vx_inlet=inlet_Vx(
+                axial_model,
+                eos,
+                axial_map.Pt_ref,
+                P.enthalpy_from_temperature(eos, axial_map.Tt_ref),
+                mdot_diag,
+                0.0,
+            ),
         )
         @test haskey(direct_diag.summary, :pressure_ratio)
         @test haskey(direct_diag.summary, :power)
@@ -438,7 +446,14 @@
             pt_in=101_325.0,
             ht_in=P.enthalpy_from_temperature(eos, 288.15),
             omega=600.0,
-            mdot=8.0,
+            Vx_inlet=inlet_Vx(
+                turbine_model,
+                eos,
+                101_325.0,
+                P.enthalpy_from_temperature(eos, 288.15),
+                8.0,
+                0.0,
+            ),
         )
         @test turbine_diag.summary.pressure_ratio < 1.0
         @test isapprox(turbine_diag.summary.efficiency, turbine_diag.summary.thermo_efficiency; rtol=1e-10, atol=1e-10)
@@ -546,20 +561,6 @@
         ht_ref = P.enthalpy_from_temperature(eos_axial, Tt_ref)
         a0 = P.speed_of_sound(eos_axial, Pt_ref, ht_ref)
         omega_mid = m_mid * a0 / meanline.r_tip_ref
-        inlet_Vx(model, eos, pt_in, ht_in, mdot, Vtheta_inlet) = begin
-            inlet = AM._solve_station_Vx(
-                eos,
-                mdot,
-                pt_in,
-                ht_in,
-                P.entropy(eos, pt_in, ht_in),
-                AM.station_area(model, 1),
-                Vtheta_inlet;
-                prefer=:low,
-            )
-            @test inlet.converged
-            inlet.Vx
-        end
         @test length(radii) == length(meanline.rows)
         for (r, row) in zip(radii, meanline.rows)
             @test isapprox(r, 0.5 * (row.r_hub + row.r_tip); rtol=0, atol=1e-12)
@@ -599,12 +600,54 @@
         @test isfinite(meanline_vals_core.eta)
         @test isapprox(meanline_vals_core.PR, meanline_vals.PR; rtol=1e-12)
         @test isapprox(meanline_vals_core.eta, meanline_vals.eta; rtol=1e-12)
+        meanline_vals_from_mdot = AM.streamtube_solve(
+            meanline,
+            eos_axial,
+            radii,
+            Pt_ref,
+            ht_ref,
+            omega_mid,
+            inlet_Vx(meanline, eos_axial, Pt_ref, ht_ref, meanline_vals_core.stations[1].mdot_station, 0.0),
+            0.0,
+        )
+        @test isapprox(meanline_vals_from_mdot.PR, meanline_vals_core.PR; rtol=1e-10)
+        @test isapprox(meanline_vals_from_mdot.eta, meanline_vals_core.eta; rtol=1e-9)
+        @test isapprox(meanline_vals_from_mdot.stations[1].Vx, meanline_vals_core.stations[1].Vx; rtol=1e-9)
+        feasible = AM.feasible_flow_limits(
+            meanline,
+            eos_axial,
+            [omega_mid],
+            meanline.Vx_bounds[1],
+            meanline.Vx_bounds[2];
+            pt_in=Pt_ref,
+            ht_in=ht_ref,
+        )
+        @test feasible.valid_speed_idx == [1]
+        @test length(feasible.Vx_min) == 1
+        @test feasible.Vx_max[1] >= feasible.Vx_min[1]
+        @test isfinite(feasible.mdot_min[1])
+        @test isfinite(feasible.mdot_max[1])
+        @test feasible.mdot_max[1] >= feasible.mdot_min[1]
+        sampled = AM.sample_streamtube_solve(
+            meanline,
+            eos_axial,
+            [omega_mid],
+            [Vx_mid];
+            pt_in=Pt_ref,
+            ht_in=ht_ref,
+            Vx_min=feasible.Vx_min,
+            Vx_max=feasible.Vx_max,
+        )
+        @test size(sampled.pr_table) == (1, 1)
+        @test size(sampled.eta_table) == (1, 1)
+        @test size(sampled.mdot_table) == (1, 1)
+        @test isfinite(sampled.mdot_table[1, 1])
         @test length(meanline_vals_core.station_data) == length(meanline.rows) + 1
         @test length(meanline_vals_core.row_data) == length(meanline.rows)
         @test meanline_vals_core.station_data[1].area ≈ AM.station_area(meanline, 1)
-        @test meanline_vals_core.row_data[1].row_annulus_area ≈ AM.row_annulus_area(meanline.rows[1])
-        @test meanline_vals_core.row_data[1].theta_metal_in == meanline.rows[1].theta_metal_in
-        @test meanline_vals_core.row_data[1].theta_metal_out == meanline.rows[1].theta_metal_out
+        @test AM.row_annulus_area(meanline.rows[1]) > 0
+        @test AM.row_mean_radius(meanline.rows[1]) > meanline.rows[1].r_hub
+        @test AM.row_angular_speed(meanline.rows[1], omega_mid) == meanline.rows[1].speed_ratio_to_ref * omega_mid
 
         dim_from_meanline = TTM.tabulate_compressor_meanline_model_dim(
             meanline;

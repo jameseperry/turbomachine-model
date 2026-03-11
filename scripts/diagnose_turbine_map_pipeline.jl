@@ -65,10 +65,10 @@ function _eta_turb_from_comp(eta_comp::Float64)
     return NaN
 end
 
-function _direct_turbine_state_from_mdot(
+function _direct_turbine_state_from_Vx(
     model::Axial.AxialMachineModel,
     m_tip::Float64,
-    mdot::Float64,
+    Vx_inlet::Float64,
     Tt_in_ref::Float64,
     Pt_in_ref::Float64,
 )
@@ -76,14 +76,14 @@ function _direct_turbine_state_from_mdot(
     ht_in_ref = TurboMachineModel.Physics.Fluids.enthalpy_from_temperature(eos, Tt_in_ref)
     a0_in_ref = sqrt(model.gamma * model.gas_constant * Tt_in_ref)
     omega = m_tip * a0_in_ref / model.r_tip_ref
-    vals = Axial.streamtube_solve_from_mdot(
+    vals = Axial.streamtube_solve(
         model,
         eos,
         Axial.meanline_radii(model),
         Pt_in_ref,
         ht_in_ref,
         omega,
-        mdot,
+        Vx_inlet,
         0.0,
     )
     vals.valid || return (valid=false,)
@@ -99,7 +99,8 @@ function _direct_turbine_state_from_mdot(
         PR=vals.PR,
         eta=eta_t,
         omega=omega,
-        mdot=mdot,
+        mdot=vals.stations[1].mdot_station,
+        Vx_inlet=Vx_inlet,
     )
 end
 
@@ -135,8 +136,8 @@ function _build_parser()
             help = "diagnostic speed samples in m_tip space"
             arg_type = Int
             default = 31
-        "--n-phi"
-            help = "diagnostic flow samples in mdot space"
+        "--n-vx"
+            help = "diagnostic inlet-velocity samples"
             arg_type = Int
             default = 121
         "--csv"
@@ -154,7 +155,7 @@ function _main(args::Vector{String}=ARGS)
     Tt_in_ref = Float64(something(_parsed_opt(parsed, "tt_in_ref", "tt-in-ref"), 288.15))
     Pt_in_ref = Float64(something(_parsed_opt(parsed, "pt_in_ref", "pt-in-ref"), 101_325.0))
     n_speed = Int(something(_parsed_opt(parsed, "n_speed", "n-speed"), 31))
-    n_phi = Int(something(_parsed_opt(parsed, "n_phi", "n-phi"), 121))
+    n_vx = Int(something(_parsed_opt(parsed, "n_vx", "n-vx"), 121))
     csv_path = _parsed_opt(parsed, "csv", "csv")
 
     model = Axial.read_toml(Axial.AxialMachineModel, parsed["meanline_path"]; group=meanline_group)
@@ -162,27 +163,7 @@ function _main(args::Vector{String}=ARGS)
 
     m_lo, m_hi = model.m_tip_bounds
     m_grid = collect(range(m_lo, m_hi, length=n_speed))
-    eos = TurboMachineModel.Physics.Fluids.IdealGasEOS(:axial; gas_constant=model.gas_constant, gamma=model.gamma)
-    ht_in_ref = TurboMachineModel.Physics.Fluids.enthalpy_from_temperature(eos, Tt_in_ref)
-    inlet_area = Axial.station_area(model, 1)
-    mdot_grid = let
-        Vx_grid = collect(range(model.Vx_bounds[1], model.Vx_bounds[2], length=n_phi))
-        [
-            Axial._build_station_state(
-                eos,
-                Axial._station_radius(model, Axial.meanline_radii(model), 1),
-                inlet_area,
-                Pt_in_ref,
-                ht_in_ref,
-                Vx,
-                0.0,
-                NaN,
-                true,
-                false,
-                false,
-            ).mdot_station for Vx in Vx_grid
-        ]
-    end
+    Vx_grid = collect(range(model.Vx_bounds[1], model.Vx_bounds[2], length=n_vx))
 
     pr_err = Float64[]
     eta_err = Float64[]
@@ -195,8 +176,8 @@ function _main(args::Vector{String}=ARGS)
     for (i, m_tip) in pairs(m_grid)
         direct_line = NamedTuple[]
         map_line = NamedTuple[]
-        for mdot in mdot_grid
-            st = _direct_turbine_state_from_mdot(model, Float64(m_tip), Float64(mdot), Tt_in_ref, Pt_in_ref)
+        for Vx_inlet in Vx_grid
+            st = _direct_turbine_state_from_Vx(model, Float64(m_tip), Float64(Vx_inlet), Tt_in_ref, Pt_in_ref)
             st.valid || continue
             map_vals = TM.performance_from_stagnation(map, st.omega, st.mdot, Tt_in_ref, Pt_in_ref)
             map_vals.valid || continue
@@ -204,7 +185,7 @@ function _main(args::Vector{String}=ARGS)
             row = (
                 speed_idx=i,
                 m_tip=Float64(m_tip),
-                mdot_input=Float64(mdot),
+                Vx_inlet=st.Vx_inlet,
                 omega=st.omega,
                 mdot=st.mdot,
                 pr_direct=st.PR,
@@ -249,12 +230,12 @@ function _main(args::Vector{String}=ARGS)
 
     if !isnothing(csv_path)
         open(csv_path, "w") do io
-            println(io, "speed_idx,m_tip,mdot_input,omega,mdot,pr_direct,eta_direct,pr_map,eta_map,pr_err,eta_err")
+            println(io, "speed_idx,m_tip,Vx_inlet,omega,mdot,pr_direct,eta_direct,pr_map,eta_map,pr_err,eta_err")
             for row in sample_rows
                 println(io, join((
                     row.speed_idx,
                     row.m_tip,
-                    row.mdot_input,
+                    row.Vx_inlet,
                     row.omega,
                     row.mdot,
                     row.pr_direct,

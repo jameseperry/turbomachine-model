@@ -3,10 +3,9 @@ module AxialMachine
 export BladeAeroModel
 export rotor_aero_model, stator_aero_model
 export AxialRow, AxialMachineModel
-export meanline_radii, station_area
+export meanline_radii, row_mean_radius, row_annulus_area, row_angular_speed, row_streamtube_radius, station_area
 export blade_aero
 export streamtube_solve
-export streamtube_solve_from_mdot
 export sample_streamtube_solve
 export feasible_flow_limits
 
