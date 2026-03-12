@@ -242,6 +242,9 @@ function _sample_meanline_tables(
     Vtheta_inlet::Real,
     prefer_root::Symbol,
     want_diagnostics::Bool,
+    repair_infeasible_samples::Bool,
+    infeasible_samples_sink::Union{Nothing,AbstractVector},
+    sampling_audit_sink::Union{Nothing,AbstractVector},
 )
     valid_idx = limits.valid_speed_idx
     omega_corr_valid = grids.omega_corr_grid[valid_idx]
@@ -250,39 +253,117 @@ function _sample_meanline_tables(
     n_flow = length(grids.mdot_corr_grid)
     pr_table = Matrix{Float64}(undef, n_speed, n_flow)
     eta_table = Matrix{Float64}(undef, n_speed, n_flow)
-    diagnostics = want_diagnostics ? Matrix{NamedTuple}(undef, n_speed, n_flow) : Matrix{NamedTuple}(undef, 0, 0)
+    diagnostics = want_diagnostics ?
+        Matrix{TabulatedPerformanceDiagnosticSample}(undef, n_speed, n_flow) :
+        Matrix{TabulatedPerformanceDiagnosticSample}(undef, 0, 0)
 
     for i in eachindex(valid_idx)
         for j in 1:n_flow
-            Vx_used = clamp(grids.Vx_grid[j], limits.Vx_min[i], limits.Vx_max[i])
+            Vx_target = grids.Vx_grid[j]
             sample = _sample_axial_machine_streamtube(
                 model,
                 eos,
                 omega_valid[i],
-                Vx_used;
+                Vx_target;
                 pt_in=Float64(pt_in),
                 ht_in=Float64(ht_in),
                 streamtube_radii=grids.streamtube_radii,
                 Vtheta_inlet=Float64(Vtheta_inlet),
                 prefer_root=prefer_root,
             )
+            exact_feasible = sample.valid && isfinite(sample.PR) && isfinite(sample.eta)
+            if !exact_feasible && !isnothing(infeasible_samples_sink)
+                push!(infeasible_samples_sink, (
+                    i_speed=i,
+                    i_flow=j,
+                    omega=omega_valid[i],
+                    omega_corr=omega_corr_valid[i],
+                    Vx_inlet=Vx_target,
+                    mdot=grids.mdot_grid[j],
+                    mdot_corr=grids.mdot_corr_grid[j],
+                    pt_in=Float64(pt_in),
+                    ht_in=Float64(ht_in),
+                    Vtheta_inlet=Float64(Vtheta_inlet),
+                    Vx_min=limits.Vx_min[i],
+                    Vx_max=limits.Vx_max[i],
+                    mdot_min=limits.mdot_min[i],
+                    mdot_max=limits.mdot_max[i],
+                    pressure_ratio=sample.PR,
+                    efficiency=sample.eta,
+                    valid=sample.valid,
+                    stall=sample.stall,
+                    choke=sample.choke,
+                    status=sample.raw.status,
+                ))
+            end
+            Vx_used = Vx_target
+            repaired_sample = false
+            if repair_infeasible_samples && !exact_feasible
+                repaired = AxialMachine._nearest_feasible_flow_sample(
+                    model,
+                    eos,
+                    omega_valid[i],
+                    Vx_target,
+                    limits.Vx_min[i],
+                    limits.Vx_max[i],
+                    Float64(pt_in),
+                    Float64(ht_in),
+                    grids.streamtube_radii,
+                    Float64(Vtheta_inlet),
+                    prefer_root,
+                    vals -> vals.valid && isfinite(vals.PR) && isfinite(vals.eta);
+                    n_probe=61,
+                )
+                if repaired.found
+                    Vx_used = repaired.Vx
+                    repaired_sample = true
+                    sample = (
+                        PR=Float64(repaired.vals.PR),
+                        eta=Float64(repaired.vals.eta),
+                        valid=Bool(repaired.vals.valid),
+                        stall=Bool(repaired.vals.stall),
+                        choke=Bool(repaired.vals.choke),
+                        raw=repaired.vals,
+                    )
+                end
+            end
+            if !isnothing(sampling_audit_sink)
+                push!(sampling_audit_sink, (
+                    i_speed=i,
+                    i_flow=j,
+                    omega=omega_valid[i],
+                    omega_corr=omega_corr_valid[i],
+                    Vx_inlet=Vx_target,
+                    mdot=grids.mdot_grid[j],
+                    mdot_corr=grids.mdot_corr_grid[j],
+                    feasible=exact_feasible,
+                    repaired=repaired_sample,
+                    pressure_ratio=sample.PR,
+                    efficiency=sample.eta,
+                    valid=sample.valid,
+                    stall=sample.stall,
+                    choke=sample.choke,
+                    status=sample.raw.status,
+                ))
+            end
+            if !(sample.valid && isfinite(sample.PR) && isfinite(sample.eta))
+                error("meanline sampling produced invalid value at omega=$(omega_valid[i]), Vx_inlet=$(Vx_target), projected_mdot=$(grids.mdot_grid[j]), repair_infeasible_samples=$(repair_infeasible_samples)")
+            end
             pr_table[i, j] = sample.PR
             eta_table[i, j] = sample.eta
 
             if want_diagnostics
-                diagnostics[i, j] = (
-                    omega_corr=omega_corr_valid[i],
-                    omega=omega_valid[i],
-                    Vx=grids.Vx_grid[j],
-                    Vx_used=Vx_used,
-                    mdot_corr=grids.mdot_corr_grid[j],
-                    mdot=grids.mdot_grid[j],
-                    mdot_used=sample.raw.stations[1].mdot_station,
-                    PR=sample.PR,
-                    eta=sample.eta,
-                    valid=sample.valid,
-                    stall=sample.stall,
-                    choke=sample.choke,
+                diagnostics[i, j] = TabulatedPerformanceDiagnosticSample(
+                    omega_corr_valid[i],
+                    omega_valid[i],
+                    Vx_target,
+                    Vx_used,
+                    grids.mdot_corr_grid[j],
+                    grids.mdot_grid[j],
+                    sample.raw.stations[1].mdot_station,
+                    exact_feasible,
+                    repaired_sample,
+                    sample.raw,
                 )
             end
         end
@@ -293,6 +374,22 @@ function _sample_meanline_tables(
         pr_table=pr_table,
         eta_table=eta_table,
         diagnostics=diagnostics,
+    )
+end
+
+function _build_tabulated_performance_map_diagnostics(
+    grids::NamedTuple,
+    tables::NamedTuple,
+    Tt_ref::Real,
+    Pt_ref::Real,
+)
+    size(tables.diagnostics, 1) == 0 && error("diagnostics were not requested during tabulation")
+    return TabulatedPerformanceMapDiagnostics(
+        Tt_ref,
+        Pt_ref,
+        tables.omega_corr_valid,
+        grids.mdot_corr_grid,
+        tables.diagnostics,
     )
 end
 
@@ -344,6 +441,9 @@ function tabulate_axial_machine_model(
     Vtheta_inlet::Real=0.0,
     prefer_root::Symbol=:low,
     want_diagnostics::Bool=true,
+    repair_infeasible_samples::Bool=true,
+    infeasible_samples_sink::Union{Nothing,AbstractVector}=nothing,
+    sampling_audit_sink::Union{Nothing,AbstractVector}=nothing,
 )
     interpolation in (:bilinear, :bicubic) ||
         error("interpolation must be :bilinear or :bicubic")
@@ -386,6 +486,9 @@ function tabulate_axial_machine_model(
         Vtheta_inlet=Float64(Vtheta_inlet),
         prefer_root=prefer_root,
         want_diagnostics=want_diagnostics,
+        repair_infeasible_samples=repair_infeasible_samples,
+        infeasible_samples_sink=infeasible_samples_sink,
+        sampling_audit_sink=sampling_audit_sink,
     )
     return _build_tabulated_performance_map(
         grids,
@@ -395,6 +498,87 @@ function tabulate_axial_machine_model(
         Pt_ref,
         interpolation,
     )
+end
+
+function tabulate_axial_machine_model_with_diagnostics(
+    model::AxialModel;
+    kwargs...,
+)
+    merged = (; want_diagnostics=true, kwargs...)
+    eos = get(merged, :eos, _default_axial_eos(model))
+    n_speed = get(merged, :n_speed, 31)
+    n_flow = get(merged, :n_flow, 41)
+    omega_corr_grid = get(merged, :omega_corr_grid, nothing)
+    mdot_corr_grid = get(merged, :mdot_corr_grid, nothing)
+    Tt_in_ref = get(merged, :Tt_in_ref, 288.15)
+    Pt_in_ref = get(merged, :Pt_in_ref, 101_325.0)
+    Tt_ref = get(merged, :Tt_ref, Tt_in_ref)
+    Pt_ref = get(merged, :Pt_ref, Pt_in_ref)
+    interpolation = get(merged, :interpolation, :bilinear)
+    boundary_resolution = get(merged, :boundary_resolution, 401)
+    streamtube_radii = get(merged, :streamtube_radii, AxialMachine.meanline_radii(model))
+    Vtheta_inlet = get(merged, :Vtheta_inlet, 0.0)
+    prefer_root = get(merged, :prefer_root, :low)
+    repair_infeasible_samples = get(merged, :repair_infeasible_samples, true)
+    infeasible_samples_sink = get(merged, :infeasible_samples_sink, nothing)
+    sampling_audit_sink = get(merged, :sampling_audit_sink, nothing)
+
+    grids = _resolve_meanline_tabulation_grids(
+        model,
+        eos,
+        n_speed,
+        n_flow,
+        omega_corr_grid,
+        mdot_corr_grid,
+        Tt_in_ref,
+        Pt_in_ref,
+        Tt_ref,
+        Pt_ref,
+        streamtube_radii,
+    )
+    limits = _compute_feasible_flow_limits(
+        model,
+        eos,
+        grids,
+        Tt_in_ref,
+        Pt_in_ref,
+        Tt_ref,
+        Pt_ref;
+        pt_in=Float64(Pt_in_ref),
+        ht_in=grids.ht_in_ref,
+        boundary_resolution=boundary_resolution,
+        Vtheta_inlet=Float64(Vtheta_inlet),
+        prefer_root=prefer_root,
+    )
+    tables = _sample_meanline_tables(
+        model,
+        eos,
+        grids,
+        limits;
+        pt_in=Float64(Pt_in_ref),
+        ht_in=grids.ht_in_ref,
+        Vtheta_inlet=Float64(Vtheta_inlet),
+        prefer_root=prefer_root,
+        want_diagnostics=true,
+        repair_infeasible_samples=repair_infeasible_samples,
+        infeasible_samples_sink=infeasible_samples_sink,
+        sampling_audit_sink=sampling_audit_sink,
+    )
+    map = _build_tabulated_performance_map(
+        grids,
+        limits,
+        tables,
+        Tt_ref,
+        Pt_ref,
+        interpolation,
+    )
+    diagnostics = _build_tabulated_performance_map_diagnostics(
+        grids,
+        tables,
+        Tt_ref,
+        Pt_ref,
+    )
+    return (map=map, diagnostics=diagnostics)
 end
 
 """

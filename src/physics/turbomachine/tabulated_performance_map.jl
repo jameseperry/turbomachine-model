@@ -234,6 +234,39 @@ function performance_map_domain(
     )
 end
 
+function nearest_grid_indices(
+    map::TabulatedPerformanceMap,
+    omega::Real,
+    mdot::Real,
+    Tt_in::Real,
+    Pt_in::Real;
+    n::Int=1,
+)
+    n >= 1 || error("n must be >= 1")
+    speed_coord = corrected_speed(omega, Tt_in, map.Tt_ref)
+    flow_coord = corrected_flow(mdot, Tt_in, Pt_in, map.Tt_ref, map.Pt_ref)
+    xgrid = tabulated_speed_grid(map)
+    ygrid = tabulated_flow_grid(map)
+    xspan = max(last(xgrid) - first(xgrid), eps(Float64))
+    yspan = max(last(ygrid) - first(ygrid), eps(Float64))
+    pairs = Tuple{Float64,CartesianIndex{2}}[]
+    for i in eachindex(xgrid), j in eachindex(ygrid)
+        dx = (xgrid[i] - speed_coord) / xspan
+        dy = (ygrid[j] - flow_coord) / yspan
+        push!(pairs, (dx^2 + dy^2, CartesianIndex(i, j)))
+    end
+    sort!(pairs; by=first)
+    return [idx for (_, idx) in Iterators.take(pairs, min(n, length(pairs)))]
+end
+
+nearest_grid_index(
+    map::TabulatedPerformanceMap,
+    omega::Real,
+    mdot::Real,
+    Tt_in::Real,
+    Pt_in::Real,
+) = first(nearest_grid_indices(map, omega, mdot, Tt_in, Pt_in; n=1))
+
 """Demo common tabulated map using the legacy compressor sample data."""
 function demo_tabulated_performance_map_compressor(; interpolation::Symbol=:bilinear)
     return TabulatedPerformanceMap(

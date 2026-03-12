@@ -642,6 +642,35 @@
         @test size(sampled.eta_table) == (1, 1)
         @test size(sampled.mdot_table) == (1, 1)
         @test isfinite(sampled.mdot_table[1, 1])
+        infeasible_samples = NamedTuple[]
+        repaired_sampled = AM.sample_streamtube_solve(
+            meanline,
+            eos_axial,
+            [omega_mid],
+            [2_000.0];
+            pt_in=Pt_ref,
+            ht_in=ht_ref,
+            Vx_min=feasible.Vx_min,
+            Vx_max=feasible.Vx_max,
+            repair_infeasible_samples=true,
+            infeasible_samples_sink=infeasible_samples,
+        )
+        @test size(repaired_sampled.pr_table) == (1, 1)
+        @test length(infeasible_samples) == 1
+        @test infeasible_samples[1].omega == omega_mid
+        @test infeasible_samples[1].Vx_inlet == 2_000.0
+        Vx_bad = 2_000.0
+        @test_throws ErrorException AM.sample_streamtube_solve(
+            meanline,
+            eos_axial,
+            [omega_mid],
+            [Vx_bad];
+            pt_in=Pt_ref,
+            ht_in=ht_ref,
+            Vx_min=feasible.Vx_min,
+            Vx_max=feasible.Vx_max,
+            repair_infeasible_samples=false,
+        )
         @test length(meanline_vals_core.station_data) == length(meanline.rows) + 1
         @test length(meanline_vals_core.row_data) == length(meanline.rows)
         @test meanline_vals_core.station_data[1].area ≈ AM.station_area(meanline, 1)
@@ -723,6 +752,50 @@
         )
         @test shared_domain.omega[1] > 0
         @test shared_domain.omega[2] > shared_domain.omega[1]
+
+        tabulated_bundle = TP.Turbomachine.tabulate_axial_machine_model_with_diagnostics(
+            meanline;
+            eos=eos_axial,
+            n_speed=4,
+            n_flow=5,
+            interpolation=:bilinear,
+            Tt_in_ref=300.0,
+            Pt_in_ref=101_325.0,
+            Tt_ref=300.0,
+            Pt_ref=101_325.0,
+            boundary_resolution=61,
+        )
+        @test tabulated_bundle.map isa TP.Turbomachine.TabulatedPerformanceMap
+        @test tabulated_bundle.diagnostics isa TP.Turbomachine.TabulatedPerformanceMapDiagnostics
+        @test size(tabulated_bundle.diagnostics.samples) == (
+            length(TP.Turbomachine.tabulated_speed_grid(tabulated_bundle.map)),
+            length(TP.Turbomachine.tabulated_flow_grid(tabulated_bundle.map)),
+        )
+        idx = TP.Turbomachine.nearest_grid_index(tabulated_bundle.map, omega_sample, mdot_sample, 300.0, 101_325.0)
+        sample_diag = TP.Turbomachine.diagnostic_sample(tabulated_bundle.diagnostics, idx)
+        @test sample_diag.result isa AM.StreamtubeSolveResult
+        nearest_diags = TP.Turbomachine.nearest_diagnostic_samples(
+            tabulated_bundle.map,
+            tabulated_bundle.diagnostics,
+            omega_sample,
+            mdot_sample,
+            300.0,
+            101_325.0;
+            n=3,
+        )
+        @test length(nearest_diags) == 3
+        @test all(diag -> diag.result isa AM.StreamtubeSolveResult, nearest_diags)
+
+        diag_toml_path = tempname() * ".toml"
+        TM.write_toml(tabulated_bundle.diagnostics, diag_toml_path)
+        loaded_diags = TM.read_toml(TM.TabulatedPerformanceMapDiagnostics, diag_toml_path)
+        @test loaded_diags.speed_grid == tabulated_bundle.diagnostics.speed_grid
+        @test loaded_diags.flow_grid == tabulated_bundle.diagnostics.flow_grid
+        @test size(loaded_diags.samples) == size(tabulated_bundle.diagnostics.samples)
+        loaded_sample = TM.diagnostic_sample(loaded_diags, idx)
+        @test loaded_sample.result.status == sample_diag.result.status
+        @test isapprox(loaded_sample.result.pressure_ratio, sample_diag.result.pressure_ratio; rtol=1e-12, atol=1e-12)
+        @test isapprox(loaded_sample.Vx_used, sample_diag.Vx_used; rtol=1e-12, atol=1e-12)
 
         meanline_path = tempname() * ".toml"
         AM.write_toml(meanline, meanline_path)

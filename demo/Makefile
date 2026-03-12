@@ -13,10 +13,12 @@ TURBINE_DIAG_OMEGA ?= 600
 TURBINE_DIAG_VX ?= 73.90934036321465
 
 USER_AXIAL_TOMLS  := $(wildcard axial/*/*.toml)
-USER_MAP_TOMLS := $(wildcard map/*/*.toml)
+USER_MAP_TOMLS := $(filter-out %.diagnostics.toml,$(wildcard map/*/*.toml))
 
 GENERATED_AXIAL_TOMLS := axial/compressor/demo.toml axial/turbine/demo.toml
 GENERATED_MAP_TOMLS := $(patsubst axial/%.toml,map/%.toml,$(GENERATED_AXIAL_TOMLS))
+GENERATED_INFEASIBLE_POINT_CSV := $(GENERATED_MAP_TOMLS:.toml=.infeasible_points.csv)
+GENERATED_MAP_DIAGNOSTICS_TOMLS := $(GENERATED_MAP_TOMLS:.toml=.diagnostics.toml)
 
 ALL_AXIAL_TOMLS := $(sort $(USER_AXIAL_TOMLS) $(GENERATED_AXIAL_TOMLS))
 ALL_MAP_TOMLS := $(sort $(USER_MAP_TOMLS) $(GENERATED_MAP_TOMLS))
@@ -91,39 +93,51 @@ map/compressor/%.toml: axial/compressor/%.toml
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/generate_performance_map_from_axial_machine_model.jl $< $@ \
 		--interpolation $(INTERPOLATION) \
-		--prefer-root low
+		--prefer-root low \
+		--strict-sampling \
+		--infeasible-points-csv $(@:.toml=.infeasible_points.csv) \
+		--diagnostics-output $(@:.toml=.diagnostics.toml)
 
 map/turbine/%.toml: axial/turbine/%.toml
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/generate_performance_map_from_axial_machine_model.jl $< $@ \
 		--interpolation $(INTERPOLATION) \
 		--prefer-root high \
+		--strict-sampling \
+		--infeasible-points-csv $(@:.toml=.infeasible_points.csv) \
+		--diagnostics-output $(@:.toml=.diagnostics.toml) \
 		--n-speed 100 \
 		--n-flow 100
 
 map/compressor/%.performance_map.png: map/compressor/%.toml
 	@mkdir -p $(@D)
-	$(JULIA) $(SCRIPTS)/plot_performance_map.jl $< --output $@
+	$(JULIA) $(SCRIPTS)/plot_performance_map.jl $< \
+		--diagnostics-path $(<:.toml=.diagnostics.toml) \
+		--output $@
 
 map/turbine/%.performance_map.png: map/turbine/%.toml
 	@mkdir -p $(@D)
-	$(JULIA) $(SCRIPTS)/plot_performance_map.jl $< --output $@
+	$(JULIA) $(SCRIPTS)/plot_performance_map.jl $< \
+		--diagnostics-path $(<:.toml=.diagnostics.toml) \
+		--output $@
 
 map/compressor/%.operating_sweep.png: map/compressor/%.toml
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/plot_operating_sweep.jl $< \
+		--diagnostics-path $(<:.toml=.diagnostics.toml) \
 		--machine-kind compressor \
 		--track-all-branches \
 		--n-omega $(SWEEP_N_OMEGA) \
 		--n-pr $(SWEEP_N_PT_IN) \
 		--pr-min 0.5 \
-		--pr-max 10.0 \
+		--pr-max 5.0 \
 		--csv $(@:.operating_sweep.png=.operating_sweep.csv) \
 		--output $@
 
 map/turbine/%.operating_sweep.png: map/turbine/%.toml
 	@mkdir -p $(@D)
 	$(JULIA) $(SCRIPTS)/plot_operating_sweep.jl $< \
+		--diagnostics-path $(<:.toml=.diagnostics.toml) \
 		--machine-kind turbine \
 		--track-all-branches \
 		--n-omega $(SWEEP_N_OMEGA) \
@@ -134,4 +148,4 @@ map/turbine/%.operating_sweep.png: map/turbine/%.toml
 		--output $@
 
 clean:
-	rm -f $(GENERATED_AXIAL_TOMLS) $(GENERATED_MAP_TOMLS) $(PERFORMANCE_MAP_PLOTS) $(OPERATING_SWEEP_PLOTS) $(OPERATING_SWEEP_CSV) $(AXIAL_DIAGNOSTIC_TXT)
+	rm -f $(GENERATED_AXIAL_TOMLS) $(GENERATED_MAP_TOMLS) $(GENERATED_INFEASIBLE_POINT_CSV) $(GENERATED_MAP_DIAGNOSTICS_TOMLS) $(PERFORMANCE_MAP_PLOTS) $(OPERATING_SWEEP_PLOTS) $(OPERATING_SWEEP_CSV) $(AXIAL_DIAGNOSTIC_TXT)

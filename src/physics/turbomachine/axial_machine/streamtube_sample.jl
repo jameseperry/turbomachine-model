@@ -70,6 +70,8 @@ function sample_streamtube_solve(
     streamtube_radii::AbstractVector{<:Real}=meanline_radii(model),
     Vtheta_inlet::Real=0.0,
     prefer_root::Symbol=:low,
+    repair_infeasible_samples::Bool=true,
+    infeasible_samples_sink::Union{Nothing,AbstractVector}=nothing,
     is_feasible::Function=(vals -> vals.valid && isfinite(vals.PR) && isfinite(vals.eta)),
 )
     length(speed_grid) >= 1 || error("speed_grid must be non-empty")
@@ -90,10 +92,7 @@ function sample_streamtube_solve(
     for (i, speed_raw) in pairs(speed_grid)
         speed = Float64(speed_raw)
         for (j, Vx_raw) in pairs(Vx_grid)
-            Vx = Float64(Vx_raw)
-            if has_limits
-                Vx = clamp(Vx, Float64(Vx_min[i]), Float64(Vx_max[i]))
-            end
+            Vx_target = Float64(Vx_raw)
             vals = streamtube_solve(
                 model,
                 eos,
@@ -101,18 +100,39 @@ function sample_streamtube_solve(
                 Float64(pt_in),
                 Float64(ht_in),
                 speed,
-                Vx,
+                Vx_target,
                 Float64(Vtheta_inlet);
                 prefer_root=prefer_root,
             )
-            if !is_feasible(vals) && has_limits
+            if !is_feasible(vals) && !isnothing(infeasible_samples_sink)
+                push!(infeasible_samples_sink, (
+                    i_speed=i,
+                    i_flow=j,
+                    omega=speed,
+                    Vx_inlet=Vx_target,
+                    mdot=vals.stations[1].mdot_station,
+                    pt_in=Float64(pt_in),
+                    ht_in=Float64(ht_in),
+                    Vtheta_inlet=Float64(Vtheta_inlet),
+                    Vx_min=has_limits ? Float64(Vx_min[i]) : NaN,
+                    Vx_max=has_limits ? Float64(Vx_max[i]) : NaN,
+                    pressure_ratio=vals.PR,
+                    efficiency=vals.eta,
+                    valid=vals.valid,
+                    stall=vals.stall,
+                    choke=vals.choke,
+                    status=vals.status,
+                ))
+            end
+            Vx_used = Vx_target
+            if repair_infeasible_samples && !is_feasible(vals) && has_limits
                 lo = Float64(Vx_min[i])
                 hi = Float64(Vx_max[i])
                 repaired = _nearest_feasible_flow_sample(
                     model,
                     eos,
                     speed,
-                    Vx,
+                    Vx_target,
                     lo,
                     hi,
                     Float64(pt_in),
@@ -124,12 +144,12 @@ function sample_streamtube_solve(
                     n_probe=61,
                 )
                 if repaired.found
-                    Vx = repaired.Vx
+                    Vx_used = repaired.Vx
                     vals = repaired.vals
                 end
             end
             is_feasible(vals) ||
-                error("streamtube sampling produced invalid value at omega=$(speed), Vx_inlet=$(Vx), limits=[$(has_limits ? Vx_min[i] : NaN), $(has_limits ? Vx_max[i] : NaN)]")
+                error("streamtube sampling produced invalid value at omega=$(speed), Vx_inlet=$(Vx_target), limits=[$(has_limits ? Vx_min[i] : NaN), $(has_limits ? Vx_max[i] : NaN)]")
             pr_table[i, j] = vals.PR
             eta_table[i, j] = vals.eta
             mdot_table[i, j] = vals.stations[1].mdot_station

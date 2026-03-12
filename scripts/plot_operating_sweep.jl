@@ -3,7 +3,6 @@
 using ArgParse
 using TurboMachineModel
 using Plots
-using Statistics: mean
 using Plots.PlotMeasures: mm
 
 const TM = TurboMachineModel.Physics.Turbomachine
@@ -22,6 +21,10 @@ end
 
 function _load_map(path::AbstractString; group::AbstractString="performance_map")
     return TM.read_toml(TM.TabulatedPerformanceMap, path; group=group)
+end
+
+function _load_diagnostics(path::AbstractString; group::AbstractString="performance_map_diagnostics")
+    return TM.read_toml(TM.TabulatedPerformanceMapDiagnostics, path; group=group)
 end
 
 function _default_omega_bounds(map::TM.TabulatedPerformanceMap, Tt_in::Real, pt_in::Real)
@@ -59,6 +62,25 @@ function _branch_count_matrix(point_results)
         counts[i, j] = length(point_results[i, j].candidates)
     end
     return counts
+end
+
+function _candidate_aggregate_matrix(point_results, f::Function)
+    n1, n2 = size(point_results)
+    vals = fill(NaN, n1, n2)
+    for i in 1:n1, j in 1:n2
+        candidates = point_results[i, j].candidates
+        isempty(candidates) && continue
+        vals[i, j] = f(candidates)
+    end
+    return vals
+end
+
+function _candidate_extreme_field_matrix(point_results, field::Symbol, which::Symbol)
+    which in (:low, :high) || error("which must be :low or :high")
+    return _candidate_aggregate_matrix(point_results, candidates -> begin
+        target = which == :low ? argmin(c.mdot for c in candidates) : argmax(c.mdot for c in candidates)
+        getproperty(candidates[target], field)
+    end)
 end
 
 function _single_rows(data)
@@ -100,7 +122,59 @@ function _write_csv(path::AbstractString, rows::Vector{<:NamedTuple})
     return path
 end
 
-function _plot_single(data; output_path::AbstractString)
+function _sample_regime(sample)
+    result = sample.result
+    !result.valid && return :invalid
+    for row in result.row_data
+        row.aero.regime == :normal || return row.aero.regime
+    end
+    return :normal
+end
+
+function _diagnostic_overlay_points(diagnostics::TM.TabulatedPerformanceMapDiagnostics)
+    points = NamedTuple[]
+    for sample in diagnostics.samples
+        result = sample.result
+        isfinite(result.pressure_ratio) || continue
+        push!(points, (
+            omega=sample.omega,
+            PR=result.pressure_ratio,
+            regime=_sample_regime(sample),
+        ))
+    end
+    return points
+end
+
+function _overlay_sampling_points!(plt, points)
+    isempty(points) && return plt
+    palette = Dict(
+        :normal => :forestgreen,
+        :stall => :darkorange,
+        :invalid => :firebrick,
+    )
+    labels = Dict(
+        :normal => "sampling: normal",
+        :stall => "sampling: stall",
+        :invalid => "sampling: invalid",
+    )
+    for regime in (:normal, :stall, :invalid)
+        regime_points = filter(p -> p.regime == regime, points)
+        isempty(regime_points) && continue
+        scatter!(
+            plt,
+            [p.omega for p in regime_points],
+            [p.PR for p in regime_points];
+            color=palette[regime],
+            markersize=2.5,
+            markerstrokewidth=0,
+            alpha=0.8,
+            label=labels[regime],
+        )
+    end
+    return plt
+end
+
+function _plot_single(data; output_path::AbstractString, overlay_points=NamedTuple[])
     pt_in = data.diagnostics[1, 1].pt_in
     pr_grid = data.pt_out_grid ./ pt_in
     branch_count = _branch_count_matrix(data.point_results)
@@ -109,103 +183,35 @@ function _plot_single(data; output_path::AbstractString)
     p2 = heatmap(data.omega_grid, pr_grid, permutedims(data.eta); xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Efficiency", colorbar_title="eta (-)", left_margin=8mm, right_margin=10mm, bottom_margin=8mm, top_margin=8mm)
     p3 = heatmap(data.omega_grid, pr_grid, permutedims(data.power ./ 1_000.0); xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Power", colorbar_title="kW", left_margin=8mm, right_margin=10mm, bottom_margin=8mm, top_margin=8mm)
     p4 = heatmap(data.omega_grid, pr_grid, permutedims(branch_count); xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Branch Count", colorbar_title="# branches", left_margin=8mm, right_margin=10mm, bottom_margin=8mm, top_margin=8mm)
+    for plt in (p1, p2, p3, p4)
+        _overlay_sampling_points!(plt, overlay_points)
+    end
     fig = plot(p1, p2, p3, p4; layout=(2, 2), size=(1300, 950))
     savefig(fig, output_path)
 end
 
-function _plot_all(data; output_path::AbstractString)
+function _plot_all(data; output_path::AbstractString, overlay_points=NamedTuple[])
     pt_in = data.diagnostics[1, 1].pt_in
     pr_grid = data.pt_out_grid ./ pt_in
     branch_count = _branch_count_matrix(data.point_results)
-    good_rows = filter(r -> r.converged, data.rows)
+    converged = float.(branch_count .> 0.0)
+    mdot_min = _candidate_extreme_field_matrix(data.point_results, :mdot, :low)
+    mdot_max = _candidate_extreme_field_matrix(data.point_results, :mdot, :high)
+    eta_min_branch = _candidate_extreme_field_matrix(data.point_results, :efficiency, :low)
+    eta_max_branch = _candidate_extreme_field_matrix(data.point_results, :efficiency, :high)
 
     p1 = heatmap(data.omega_grid, pr_grid, permutedims(branch_count); xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Branch Count", colorbar_title="# branches", left_margin=8mm, right_margin=10mm, bottom_margin=8mm, top_margin=8mm)
-
-    if !isempty(good_rows)
-        p2 = _plot_branch_field(good_rows, :mdot; xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Mass Flow Branches", colorbar_title="mdot (kg/s)")
-        p3 = _plot_branch_field(good_rows, :eta; xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Efficiency Branches", colorbar_title="eta (-)")
-        p4 = _plot_branch_field(good_rows, :power_kw; xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Power Branches", colorbar_title="kW")
-    else
-        p2 = plot(title="Mass Flow Branches", axis=false)
-        p3 = plot(title="Efficiency Branches", axis=false)
-        p4 = plot(title="Power Branches", axis=false)
+    p2 = heatmap(data.omega_grid, pr_grid, permutedims(converged); xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Converged Region", colorbar_title="converged", clims=(0.0, 1.0), left_margin=8mm, right_margin=10mm, bottom_margin=8mm, top_margin=8mm)
+    p3 = heatmap(data.omega_grid, pr_grid, permutedims(mdot_min); xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Lowest-Flow Branch", colorbar_title="mdot_low (kg/s)", left_margin=8mm, right_margin=10mm, bottom_margin=8mm, top_margin=8mm)
+    p4 = heatmap(data.omega_grid, pr_grid, permutedims(mdot_max); xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Highest-Flow Branch", colorbar_title="mdot_high (kg/s)", left_margin=8mm, right_margin=10mm, bottom_margin=8mm, top_margin=8mm)
+    p5 = heatmap(data.omega_grid, pr_grid, permutedims(eta_min_branch); xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Lowest-Branch Efficiency", colorbar_title="eta_low (-)", left_margin=8mm, right_margin=10mm, bottom_margin=8mm, top_margin=8mm)
+    p6 = heatmap(data.omega_grid, pr_grid, permutedims(eta_max_branch); xlabel="omega (rad/s)", ylabel="PR = pt_out / pt_in", title="Highest-Branch Efficiency", colorbar_title="eta_high (-)", left_margin=8mm, right_margin=10mm, bottom_margin=8mm, top_margin=8mm)
+    for plt in (p1, p2, p3, p4, p5, p6)
+        _overlay_sampling_points!(plt, overlay_points)
     end
 
-    fig = plot(p1, p2, p3, p4; layout=(2, 2), size=(1300, 950))
+    fig = plot(p1, p2, p3, p4, p5, p6; layout=(3, 2), size=(1300, 1350))
     savefig(fig, output_path)
-end
-
-function _plot_branch_field(
-    rows::Vector{<:NamedTuple},
-    field::Symbol;
-    xlabel::AbstractString,
-    ylabel::AbstractString,
-    title::AbstractString,
-    colorbar_title::AbstractString,
-)
-    branch_ids = sort!(unique([r.branch_id for r in rows if r.branch_id > 0]))
-    p = plot(
-        xlabel=xlabel,
-        ylabel=ylabel,
-        title=title,
-        colorbar_title=colorbar_title,
-        legend=false,
-        left_margin=8mm,
-        right_margin=10mm,
-        bottom_margin=8mm,
-        top_margin=8mm,
-    )
-
-    all_vals = Float64[]
-    for row in rows
-        value = field === :power_kw ? row.power / 1_000.0 : getproperty(row, field)
-        isfinite(value) && push!(all_vals, Float64(value))
-    end
-    isempty(all_vals) && return p
-
-    vmin = minimum(all_vals)
-    vmax = maximum(all_vals)
-    span = vmax - vmin
-    color_for(value) = cgrad(:viridis)[span <= 0 ? 0.5 : clamp((value - vmin) / span, 0.0, 1.0)]
-
-    first_series = true
-    for branch_id in branch_ids
-        branch_rows = sort(filter(r -> r.branch_id == branch_id, rows), by=r -> r.omega)
-        length(branch_rows) >= 2 || continue
-
-        omega = [r.omega for r in branch_rows]
-        pr = [r.PR for r in branch_rows]
-        values = [field === :power_kw ? r.power / 1_000.0 : getproperty(r, field) for r in branch_rows]
-        mean_value = mean(values)
-
-        plot!(
-            p,
-            omega,
-            pr;
-            color=color_for(mean_value),
-            lw=2,
-            label=false,
-        )
-
-        if first_series
-            scatter!(
-                p,
-                [omega[1]],
-                [pr[1]];
-                zcolor=[mean_value],
-                color=:viridis,
-                ms=0,
-                markerstrokewidth=0,
-                label=false,
-                colorbar=true,
-                colorbar_title=colorbar_title,
-                clims=(vmin, vmax),
-            )
-            first_series = false
-        end
-    end
-
-    return p
 end
 
 function main()
@@ -217,6 +223,13 @@ function main()
             help = "TOML group containing the common performance map."
             arg_type = String
             default = "performance_map"
+        "--diagnostics-path"
+            help = "Optional path to a performance-map diagnostics TOML on the same grid as the map."
+            arg_type = String
+        "--diagnostics-group"
+            help = "TOML group containing the performance-map diagnostics."
+            arg_type = String
+            default = "performance_map_diagnostics"
         "--machine-kind"
             help = "Controls default PR bounds and plot labeling: compressor or turbine."
             default = "compressor"
@@ -275,6 +288,14 @@ function main()
     machine_kind in (:compressor, :turbine) || error("machine-kind must be compressor or turbine")
 
     map = _load_map(parsed["map_path"]; group=_parsed_opt(parsed, "map_group", "map-group", default="performance_map"))
+    overlay_points = let path = _parsed_opt(parsed, "diagnostics_path", "diagnostics-path", default=nothing)
+        if isnothing(path)
+            NamedTuple[]
+        else
+            diagnostics = _load_diagnostics(String(path); group=_parsed_opt(parsed, "diagnostics_group", "diagnostics-group", default="performance_map_diagnostics"))
+            _diagnostic_overlay_points(diagnostics)
+        end
+    end
     eos = Fluids.ideal_EOS()[:air]
     pt_in = Float64(_parsed_opt(parsed, "pt_in", "pt-in"))
     Tt_in = Float64(_parsed_opt(parsed, "Tt_in", "Tt-in"))
@@ -308,9 +329,9 @@ function main()
 
     output_path = _parsed_opt(parsed, "output", "output")
     if data.mode == :single
-        _plot_single(data; output_path=output_path)
+        _plot_single(data; output_path=output_path, overlay_points=overlay_points)
     else
-        _plot_all(data; output_path=output_path)
+        _plot_all(data; output_path=output_path, overlay_points=overlay_points)
     end
     println("Saved operating-sweep plot to $(output_path)")
 end

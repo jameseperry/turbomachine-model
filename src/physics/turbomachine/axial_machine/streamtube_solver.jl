@@ -38,6 +38,7 @@ struct StreamtubeSolveResult
     valid::Bool
     stall::Bool
     choke::Bool
+    status::Symbol
     stations::Vector{StreamtubeStationState}
     row_data::Vector{StreamtubeRowState}
 end
@@ -101,6 +102,7 @@ function Base.getproperty(result::StreamtubeSolveResult, name::Symbol)
             valid=getfield(result, :valid),
             stall=getfield(result, :stall),
             choke=getfield(result, :choke),
+            status=getfield(result, :status),
         )
     end
     return getfield(result, name)
@@ -433,7 +435,7 @@ function _filter_outlet_candidates_by_next_row_choke(
     outlet_candidates::Vector{StreamtubeStationState},
     omega::Float64,
 )
-    row_index < length(model.rows) || return (outlet_candidates=outlet_candidates, choke=false)
+    row_index < length(model.rows) || return (outlet_candidates=outlet_candidates, choke=false, status=:normal)
     next_row = model.rows[row_index + 1]
     next_row_radius = row_streamtube_radius(streamtube_radii, row_index + 1)
     filtered = StreamtubeStationState[]
@@ -445,6 +447,7 @@ function _filter_outlet_candidates_by_next_row_choke(
     return (
         outlet_candidates=filtered,
         choke=isempty(filtered) && !isempty(outlet_candidates),
+        status=(isempty(filtered) && !isempty(outlet_candidates)) ? :next_row_inlet_choke : :normal,
     )
 end
 
@@ -518,6 +521,7 @@ function _invalid_streamtube_result(
     Vtheta_inlet::Float64,
     stall::Bool,
     choke::Bool,
+    status::Symbol,
 )
     n_rows = length(model.rows)
     n_stations = n_rows + 1
@@ -530,6 +534,7 @@ function _invalid_streamtube_result(
         false,
         stall,
         choke,
+        status,
         stations,
         row_data,
     )
@@ -578,6 +583,7 @@ function _advance_row_dimensional(
         return (
             aero_out=aero_out,
             choke=true,
+            status=:row_inlet_choke,
             outlet_candidates=StreamtubeStationState[],
         )
     end
@@ -585,6 +591,7 @@ function _advance_row_dimensional(
         return (
             aero_out=aero_out,
             choke=false,
+            status=:row_invalid_inlet_state,
             outlet_candidates=StreamtubeStationState[],
         )
     end
@@ -607,6 +614,7 @@ function _advance_row_dimensional(
         return (
             aero_out=aero_out,
             choke=true,
+            status=:row_no_roots,
             outlet_candidates=StreamtubeStationState[],
         )
     end
@@ -640,6 +648,7 @@ function _advance_row_dimensional(
     return (
         aero_out=aero_out,
         choke=isempty(outlet_candidates),
+        status=isempty(outlet_candidates) ? :row_no_outlet_candidates : :normal,
         outlet_candidates=outlet_candidates,
     )
 end
@@ -691,7 +700,7 @@ function streamtube_solve(
     # diagnostic result rather than letting the EOS or row march fail deeper in
     # the solve.
     (_positive_finite(pt_in_f) && _positive_finite(ht_in_f) && _positive_finite(Vx_inlet_f)) ||
-        return _invalid_streamtube_result(model, eos, radii; pt_in=pt_in_f, ht_in=ht_in_f, omega=omega_f, mdot=NaN, Vx_inlet=Vx_inlet_f, Vtheta_inlet=Vtheta_inlet_f, stall=true, choke=false)
+        return _invalid_streamtube_result(model, eos, radii; pt_in=pt_in_f, ht_in=ht_in_f, omega=omega_f, mdot=NaN, Vx_inlet=Vx_inlet_f, Vtheta_inlet=Vtheta_inlet_f, stall=true, choke=false, status=:invalid_inlet)
 
     # Allocate the physical per-station state. The dimensional march advances a
     # typed station object and the legacy arrays are derived afterward.
@@ -714,7 +723,7 @@ function streamtube_solve(
     )
     mdot_f = inlet.mdot_station
     _positive_finite(mdot_f) ||
-        return _invalid_streamtube_result(model, eos, radii; pt_in=pt_in_f, ht_in=ht_in_f, omega=omega_f, mdot=mdot_f, Vx_inlet=Vx_inlet_f, Vtheta_inlet=Vtheta_inlet_f, stall=false, choke=true)
+        return _invalid_streamtube_result(model, eos, radii; pt_in=pt_in_f, ht_in=ht_in_f, omega=omega_f, mdot=mdot_f, Vx_inlet=Vx_inlet_f, Vtheta_inlet=Vtheta_inlet_f, stall=false, choke=true, status=:invalid_inlet_massflow)
     stations[1] = inlet
 
     # Cache row aero diagnostics separately. The row march may terminate early on
@@ -724,6 +733,7 @@ function streamtube_solve(
     selected_candidate_index_cache = fill(0, n_rows)
     outlet_candidate_cache = [StreamtubeStationState[] for _ in 1:n_rows]
     row_choke_cache = fill(false, n_rows)
+    failure_status = :normal
 
     # March row-by-row from inlet to outlet. Each row:
     # 1. evaluates the blade aero closure at the current inlet state,
@@ -756,12 +766,21 @@ function streamtube_solve(
             )
             row_candidates = lookahead.outlet_candidates
             row_choke = row_choke || lookahead.choke
+            if lookahead.status != :normal
+                row_step = (
+                    aero_out=row_step.aero_out,
+                    choke=row_choke,
+                    status=lookahead.status,
+                    outlet_candidates=row_candidates,
+                )
+            end
         end
         outlet_candidate_cache[k] = row_candidates
         row_choke_cache[k] = row_choke
 
         selected_index = _select_outlet_candidate(row_candidates, prefer_root)
         if isnothing(selected_index)
+            failure_status = row_step.status
             break
         end
         selected_candidate_index_cache[k] = selected_index
@@ -827,6 +846,7 @@ function streamtube_solve(
         model_valid && isfinite(pressure_ratio) && pressure_ratio > 0 && isfinite(eta),
         model_stall,
         model_choke,
+        model_valid ? :normal : failure_status,
         stations,
         row_data,
     )

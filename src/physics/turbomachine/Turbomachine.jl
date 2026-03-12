@@ -3,6 +3,7 @@ module Turbomachine
 include("tabulated_performance_map.jl")
 include("operating_point_sweep.jl")
 include("axial_machine/AxialMachine.jl")
+include("tabulated_performance_map_diagnostics.jl")
 include("compressor_residuals.jl")
 include("turbine_residuals.jl")
 include("operating_point.jl")
@@ -11,10 +12,16 @@ include("meanline_model.jl")
 import .AxialMachine
 
 export TabulatedPerformanceMap
+export TabulatedPerformanceMapDiagnostics
+export TabulatedPerformanceDiagnosticSample
 export demo_tabulated_performance_map_compressor
 export demo_tabulated_performance_map_turbine
 export performance_from_stagnation
 export performance_map_domain
+export nearest_grid_index
+export nearest_grid_indices
+export diagnostic_sample
+export nearest_diagnostic_samples
 export solve_operating_point
 export replay_operating_point_with_streamtube
 export diagnose_axial_operating_point
@@ -33,6 +40,7 @@ export TurbineMeanlineModel
 export demo_axial_compressor_model
 export demo_axial_turbine_model
 export tabulate_axial_machine_model
+export tabulate_axial_machine_model_with_diagnostics
 export tabulate_axial_machine_model_dim
 export tabulate_compressor_meanline_model_dim
 export tabulate_turbine_meanline_model

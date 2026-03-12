@@ -2,7 +2,6 @@
 
 using ArgParse
 using TurboMachineModel
-
 const TM = TurboMachineModel.Physics.Turbomachine
 const AxialMachine = TM.AxialMachine
 
@@ -79,9 +78,30 @@ function _build_parser()
             help = "streamtube root preference when multiple local roots exist: low or high"
             arg_type = String
             default = "low"
+        "--strict-sampling"
+            help = "Disable silent repair/clamping of infeasible samples during map generation."
+            action = :store_true
+        "--infeasible-points-csv"
+            help = "Optional CSV output path for exact sample points that were infeasible before any repair."
+            arg_type = String
+        "--diagnostics-output"
+            help = "Optional output TOML path for full tabulation diagnostics."
+            arg_type = String
     end
 
     return settings
+end
+
+function _write_csv(path::AbstractString, rows::Vector{<:NamedTuple})
+    isempty(rows) && return path
+    headers = collect(keys(first(rows)))
+    open(path, "w") do io
+        println(io, join(String.(headers), ","))
+        for row in rows
+            println(io, join((string(getproperty(row, h)) for h in headers), ","))
+        end
+    end
+    return path
 end
 
 function _main(args::Vector{String}=ARGS)
@@ -93,6 +113,9 @@ function _main(args::Vector{String}=ARGS)
     interpolation = _parse_interpolation(parsed["interpolation"])
     prefer_root = Symbol(lowercase(parsed["prefer-root"]))
     prefer_root in (:low, :high) || error("prefer-root must be low or high")
+    strict_sampling = get(parsed, "strict_sampling", false)
+    infeasible_points_csv = get(parsed, "infeasible-points-csv", nothing)
+    diagnostics_output = get(parsed, "diagnostics-output", nothing)
 
     Tt_in_ref = parsed["Tt-in-ref"]
     Pt_in_ref = parsed["Pt-in-ref"]
@@ -106,8 +129,9 @@ function _main(args::Vector{String}=ARGS)
         group=input_group,
     )
 
-    map = TM.tabulate_axial_machine_model(
-        meanline_model;
+    infeasible_samples = NamedTuple[]
+    sampling_audit = NamedTuple[]
+    tabulate_kwargs = (
         n_speed=parsed["n-speed"],
         n_flow=parsed["n-flow"],
         Tt_in_ref=Tt_in_ref,
@@ -118,12 +142,29 @@ function _main(args::Vector{String}=ARGS)
         boundary_resolution=parsed["boundary-resolution"],
         Vtheta_inlet=parsed["vtheta-inlet"],
         prefer_root=prefer_root,
+        repair_infeasible_samples=!strict_sampling,
+        infeasible_samples_sink=infeasible_samples,
+        sampling_audit_sink=sampling_audit,
     )
+    tabulated = if isnothing(diagnostics_output)
+        (map=TM.tabulate_axial_machine_model(meanline_model; tabulate_kwargs...), diagnostics=nothing)
+    else
+        TM.tabulate_axial_machine_model_with_diagnostics(meanline_model; tabulate_kwargs...)
+    end
+    map = tabulated.map
     TM.write_toml(map, output_path; group=output_group)
+    if !isnothing(infeasible_points_csv)
+        _write_csv(String(infeasible_points_csv), infeasible_samples)
+        println("Wrote infeasible sample CSV: $(infeasible_points_csv) ($(length(infeasible_samples)) rows)")
+    end
+    if !isnothing(diagnostics_output)
+        TM.write_toml(tabulated.diagnostics, String(diagnostics_output))
+        println("Wrote diagnostics TOML: $(diagnostics_output)")
+    end
     n_speed = parsed["n-speed"]
     n_flow = parsed["n-flow"]
     println(
-        "Generated common performance map from axial-machine model: input=$(input_path) group=$(input_group), output=$(output_path) group=$(output_group), interpolation=$(interpolation), n_speed=$(n_speed), n_flow=$(n_flow), Tt_ref=$(Tt_ref), Pt_ref=$(Pt_ref), prefer_root=$(prefer_root)",
+        "Generated common performance map from axial-machine model: input=$(input_path) group=$(input_group), output=$(output_path) group=$(output_group), interpolation=$(interpolation), n_speed=$(n_speed), n_flow=$(n_flow), Tt_ref=$(Tt_ref), Pt_ref=$(Pt_ref), prefer_root=$(prefer_root), strict_sampling=$(strict_sampling), infeasible_samples=$(length(infeasible_samples)), sampled_points=$(length(sampling_audit))",
     )
 end
 
